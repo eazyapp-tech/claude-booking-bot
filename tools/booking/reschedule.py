@@ -1,8 +1,12 @@
 import httpx
 
 from config import settings
+from core.log import get_logger
+from utils.api import user_error
 from utils.date import transcribe_date
 from utils.properties import find_property as _find_property
+
+logger = get_logger("tools.reschedule")
 
 
 TOOL_SCHEMA = {
@@ -62,7 +66,7 @@ async def reschedule_booking(
             resp.raise_for_status()
             data = resp.json()
     except Exception as e:
-        return f"Error rescheduling booking: {str(e)}"
+        return user_error("reschedule your booking", e, logger=logger)
 
     if not data.get("success"):
         msg = data.get("message", "unknown error")

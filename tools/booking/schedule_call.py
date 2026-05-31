@@ -1,6 +1,7 @@
 from config import settings
 from core.log import get_logger
 from db.redis_store import get_user_phone
+from utils.api import user_error
 from utils.date import transcribe_date
 from utils.properties import find_property as _find_property
 from utils.retry import http_post
@@ -67,7 +68,7 @@ async def save_call_time(
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        return f"Error scheduling {visit_type.lower()}: {str(e)}"
+        return user_error(f"schedule your {visit_type.lower()}", e, logger=logger)
 
     # Bug fix: 'and' was wrong — 200 + success:false would fall through silently.
     # Now: any non-success body is treated as a failure regardless of HTTP status.

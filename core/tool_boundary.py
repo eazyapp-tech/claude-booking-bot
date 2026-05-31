@@ -26,10 +26,14 @@ IDEMPOTENT_TOOLS = {
     "save_visit_time",
     "save_call_time",
     "create_payment_link",
-    "verify_payment",
     "reschedule_booking",
     "cancel_booking",
 }
+# NOTE: verify_payment is deliberately NOT in this set. It takes no arguments, so
+# every call would hash to the same idempotency key for a user — meaning a second,
+# genuinely different payment verification would replay the first payment's cached
+# result. It is naturally idempotent via its own get_payment_info/clear_payment_info
+# state handling, so it needs no burst-dedup and must not get a constant key.
 
 
 def idempotency_key(user_id: str, tool_name: str, tool_input: dict) -> str:

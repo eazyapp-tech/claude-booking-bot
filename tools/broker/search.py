@@ -118,12 +118,19 @@ async def _geocode_properties(properties: list[dict], limit: int = 5) -> None:
             logger.warning("geocode failed for property %d: %s", i, r)
 
 
-async def _call_search_api(payload: dict) -> list:
-    """Call Rentok search API and return raw properties list. Uses Redis cache."""
-    # Rentok API requires pg_ids to be a non-empty array.
+async def _call_search_api(payload: dict) -> list | None:
+    """Call Rentok search API and return raw properties list. Uses Redis cache.
+
+    Returns None on a *hard failure* (the API could not be reached, raised, or
+    returned an internal error) so callers can tell "we couldn't get an answer"
+    apart from a genuine empty result set. Returns a list (possibly empty) only
+    when the API actually answered.
+    """
+    # Rentok API requires pg_ids to be a non-empty array — without them we
+    # cannot run a meaningful search, so this is a failure, not "no inventory".
     if not payload.get("pg_ids"):
-        logger.warning("pg_ids is empty — API will return no results. Ensure account_values.pg_ids is configured.")
-        return []
+        logger.warning("pg_ids is empty — cannot search. Ensure account_values.pg_ids is configured.")
+        return None
 
     # Check cache first
     cached = _get_search_cache(payload)
@@ -142,7 +149,7 @@ async def _call_search_api(payload: dict) -> list:
         inner = data.get("data", {})
         if inner.get("status") == 500:
             logger.error("API inner error: %s — %s", inner.get("message", ""), inner.get("data", {}).get("error", ""))
-            return []
+            return None
         results = inner.get("data", {}).get("results", [])
         logger.info("search API: %d results", len(results))
 
@@ -153,7 +160,7 @@ async def _call_search_api(payload: dict) -> list:
         return results
     except Exception as e:
         logger.error("search API error: %s", e)
-        return []
+        return None
 
 
 async def _fetch_first_image(client: httpx.AsyncClient, pg_id: str, pg_number: str) -> str:
@@ -260,6 +267,15 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
     MIN_RESULTS_THRESHOLD = 5
 
     properties = await _call_search_api(payload)
+    # None ⇒ hard failure (couldn't reach the listings API), NOT "no inventory".
+    # Surfacing a false "nothing available here" would be lying to the user, so we
+    # tell the truth: the problem is on our side and they should retry.
+    if properties is None:
+        return (
+            "I'm having trouble reaching our property listings right now — "
+            "this is a temporary issue on our end, not a lack of options. "
+            "Please try again in a moment."
+        )
     relaxed_note = ""
     logger.info("initial query returned %d results", len(properties))
 
@@ -274,7 +290,9 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
         if unit_types:
             r1_payload["unit_types_available"] = unit_types
         logger.debug("relaxation round 1 payload: %s", r1_payload)
-        r1_results = await _call_search_api(r1_payload)
+        # A relaxation round that hard-fails just yields no extra results — we
+        # already have the base set, so treat None as an empty top-up here.
+        r1_results = await _call_search_api(r1_payload) or []
         logger.info("relaxation round 1 returned %d results", len(r1_results))
 
         if len(r1_results) > len(properties):
@@ -296,7 +314,7 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
             "pg_ids": pg_ids,
         }
         logger.debug("relaxation round 2 payload: %s", r2_payload)
-        r2_results = await _call_search_api(r2_payload)
+        r2_results = await _call_search_api(r2_payload) or []
         logger.info("relaxation round 2 returned %d results", len(r2_results))
 
         if len(r2_results) > len(properties):

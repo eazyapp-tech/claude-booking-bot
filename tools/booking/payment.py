@@ -12,7 +12,7 @@ from db.redis_store import (
     cancel_followups,
     get_user_brand,
 )
-from utils.api import check_rentok_response, RentokAPIError
+from utils.api import check_rentok_response, RentokAPIError, user_error
 from utils.properties import find_property as _find_property
 from utils.retry import http_get, http_post
 
@@ -87,7 +87,7 @@ async def create_payment_link(user_id: str, property_name: str, **kwargs) -> str
             )
             tenant_uuid = uuid_data.get("data", {}).get("tenant_uuid", "")
         except Exception as e2:
-            return f"Error creating payment link: {str(e2)}"
+            return user_error("generate the payment link", e2, logger=logger)
 
     if not tenant_uuid:
         return "Could not generate payment link. Please try again."
@@ -99,10 +99,8 @@ async def create_payment_link(user_id: str, property_name: str, **kwargs) -> str
             params={"pg_id": pg_id, "pg_number": pg_number, "amount": amount},
         )
         check_rentok_response(data, "lead-payment-link")
-    except RentokAPIError as e:
-        return f"Error generating payment link: {str(e)}"
-    except Exception as e:
-        return f"Error generating payment link: {str(e)}"
+    except (RentokAPIError, Exception) as e:
+        return user_error("generate the payment link", e, logger=logger)
 
     link_subs = data.get("data", {}).get("link", "")
     pg_name = data.get("data", {}).get("pg_name", prop.get("property_name", property_name))
