@@ -174,4 +174,8 @@ from db.redis import (  # noqa: F401
     save_conversation_quality,
     get_conversation_quality,
     update_conversation_quality,
+    # Idempotency domain (Wave 3)
+    idem_begin,
+    idem_complete,
+    idem_release,
 )

@@ -1,7 +1,10 @@
+import asyncio
 import time
 from typing import Any, Callable
 
+from config import settings
 from core.log import get_logger
+from core.tool_boundary import IDEMPOTENT_TOOLS, idempotency_key, validate_tool_input
 from utils.properties import find_property
 
 logger = get_logger("core.tool_executor")
@@ -93,21 +96,65 @@ class ToolExecutor:
                 self._handlers[tool_name] = handler
         if handler is None:
             return f"Error: Unknown tool '{tool_name}'"
+
+        # Tool-boundary input validation (defense-in-depth) — never let the
+        # validation infra itself break an otherwise-valid call.
+        try:
+            from tools.registry import get_input_schema
+            schema_err = validate_tool_input(get_input_schema(tool_name), tool_input)
+        except Exception:
+            schema_err = None
+        if schema_err:
+            logger.warning("Tool input rejected for %s: %s", tool_name, schema_err)
+            return f"Invalid arguments for {tool_name}: {schema_err}. Please correct the arguments and try again."
+
+        # Idempotency burst-dedup for write-path tools (creates bookings/payments).
+        idem_key = None
+        if tool_name in IDEMPOTENT_TOOLS:
+            try:
+                from db.redis_store import idem_begin
+                idem_key = idempotency_key(user_id, tool_name, tool_input)
+                cached, acquired = idem_begin(idem_key, settings.IDEMPOTENCY_WINDOW_SECONDS)
+                if cached is not None:
+                    logger.info("Idempotent replay for %s (user %s)", tool_name, user_id)
+                    return cached
+                if not acquired:
+                    return ("I'm still processing your previous request — give me a moment "
+                            "and I'll confirm shortly.")
+            except Exception:
+                idem_key = None  # Redis hiccup → skip dedup, never block the tool
+
         t0 = time.monotonic()
         try:
             result = handler(user_id=user_id, **tool_input)
             if hasattr(result, "__await__"):
-                result = await result
+                result = await asyncio.wait_for(result, timeout=settings.TOOL_TIMEOUT_SECONDS)
             latency_ms = int((time.monotonic() - t0) * 1000)
             self._track(tool_name, True, latency_ms, user_id)
-            return str(result)
+            result = str(result)
+            if idem_key:
+                try:
+                    from db.redis_store import idem_complete
+                    idem_complete(idem_key, result, settings.IDEMPOTENCY_WINDOW_SECONDS)
+                except Exception:
+                    pass
+            return result
         except Exception as e:
             latency_ms = int((time.monotonic() - t0) * 1000)
+            if idem_key:
+                try:
+                    from db.redis_store import idem_release
+                    idem_release(idem_key)  # failed → allow a genuine retry
+                except Exception:
+                    pass
             self._track(tool_name, False, latency_ms, user_id)
-            logger.error("Error executing %s: %s", tool_name, e, exc_info=True)
+            err = str(e)
+            if not err:
+                err = (f"timed out after {settings.TOOL_TIMEOUT_SECONDS}s"
+                       if isinstance(e, asyncio.TimeoutError) else type(e).__name__)
+            logger.error("Error executing %s: %s", tool_name, err, exc_info=True)
             # Fire-and-forget: log structured error event to PostgreSQL
             try:
-                import asyncio
                 from db.postgres import insert_error_event
                 from db.redis_store import get_user_brand
                 asyncio.create_task(insert_error_event(
@@ -115,12 +162,12 @@ class ToolExecutor:
                     brand_hash=get_user_brand(user_id),
                     error_type="tool_failure",
                     error_source=tool_name,
-                    error_message=str(e)[:500],
+                    error_message=err[:500],
                     context={"tool_input": {k: str(v)[:200] for k, v in tool_input.items()}, "latency_ms": latency_ms},
                 ))
             except Exception:
                 pass
-            return _build_fallback(tool_name, tool_input, user_id, str(e))
+            return _build_fallback(tool_name, tool_input, user_id, err)
 
     @staticmethod
     def _track(tool_name: str, success: bool, latency_ms: int, user_id: str) -> None:

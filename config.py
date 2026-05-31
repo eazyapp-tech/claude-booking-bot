@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     CONVERSATION_HISTORY_LIMIT: int = 20
     CONVERSATION_TTL_SECONDS: int = 86400  # 24 hours
 
+    # Tool-boundary hardening (Wave 3) — enforced at the ToolExecutor seam
+    TOOL_TIMEOUT_SECONDS: float = 30.0    # per-tool execution ceiling (asyncio.wait_for)
+    IDEMPOTENCY_WINDOW_SECONDS: int = 90  # burst-dedup window for write-path tools
+
     # Conversation summarization
     SUMMARIZE_THRESHOLD: int = 30       # trigger summarization at this message count
     SUMMARIZE_KEEP_RECENT: int = 10     # keep this many recent messages verbatim
