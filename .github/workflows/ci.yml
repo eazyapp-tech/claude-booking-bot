@@ -1,0 +1,45 @@
+name: CI
+
+# Hermetic security regression gate. Runs the in-process security suite — no
+# network, no Redis, no LLM, no Postgres — so it is fast and deterministic.
+#   - pull_request: required status check; protects main from regressions.
+#   - workflow_call: reused by deploy-render.yml so a broken main never deploys.
+# (No direct push trigger: on push the deploy workflow invokes this as its gate,
+#  which avoids running the suite twice for the same commit.)
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+jobs:
+  security-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run hermetic security suite
+        env:
+          # The suite never calls Anthropic; core.claude only needs the setting
+          # present at import time. A dummy value keeps it fully offline.
+          ANTHROPIC_API_KEY: test-key-not-used
+        run: |
+          set -e
+          for t in \
+            test_untrusted_content.py \
+            test_tenant_isolation.py \
+            test_webhook_signature.py \
+            test_cost_accounting.py \
+            test_server_stop.py \
+            test_engine_contract.py; do
+            echo "::group::$t"
+            python "$t"
+            echo "::endgroup::"
+          done

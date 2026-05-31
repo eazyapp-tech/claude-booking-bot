@@ -6,7 +6,12 @@ on:
       - main
 
 jobs:
+  # Gate: run the hermetic security suite first. A broken main never deploys.
+  security-tests:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: security-tests
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Render Deploy via API
