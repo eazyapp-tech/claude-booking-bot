@@ -30,9 +30,5 @@ def format_property_docs(docs: list[dict], max_chars: int = 8000) -> str:
     if not parts:
         return ""
 
-    return (
-        "---\n"
-        "PROPERTY KNOWLEDGE BASE (uploaded documents):\n\n"
-        + "\n\n".join(parts)
-        + "\n---"
-    )
+    from core.untrusted import fence
+    return fence("\n\n".join(parts), "brand-uploaded property knowledge-base documents")

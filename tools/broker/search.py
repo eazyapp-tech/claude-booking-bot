@@ -481,4 +481,8 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
         last_search_budget=budget_str,
     )
 
-    return f"{relaxed_note}Found {len(properties)} properties. Here are the results:\n" + "\n".join(results)
+    from core.untrusted import fence
+    return (
+        f"{relaxed_note}Found {len(properties)} properties. Here are the results:\n"
+        + fence("\n".join(results), "property listing data from the Rentok API")
+    )

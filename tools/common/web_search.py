@@ -18,6 +18,7 @@ import httpx
 
 from config import settings
 from core.log import get_logger
+from core.untrusted import fence
 from db.redis_store import _r as _redis
 
 logger = get_logger("tools.web_search")
@@ -215,7 +216,7 @@ async def web_search(
     # Check cache first
     cached = _get_cache(category, query)
     if cached:
-        return _filter_competitors(cached)
+        return fence(_filter_competitors(cached), "live web-search results")
 
     # Execute search
     cfg = _CATEGORY_CONFIG[category]
@@ -235,4 +236,4 @@ async def web_search(
         "general": "Based on web search results",
     }.get(category, "Based on web search results")
 
-    return f"{prefix}:\n{filtered}"
+    return f"{prefix}:\n" + fence(filtered, "live web-search results")
