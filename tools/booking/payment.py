@@ -136,13 +136,16 @@ async def verify_payment(user_id: str, **kwargs) -> str:
     amount = payment_info.get("amount", "")
     link_subs = payment_info.get("short_link", "")
 
-    # Record payment in backend
-    safe_user_id = user_id[:12] if len(user_id) >= 12 else user_id
+    # Record payment in backend. /bookingBot/addPayment returns HTTP 200 with a
+    # `status` field in the body even when the insert fails (status:500), so a
+    # clean HTTP status is not proof — inspect the body and never report success
+    # on a backend rejection. user_id column is `text` (no length limit) and the
+    # table is write-only, so send the full id, not a truncated one.
     try:
-        await http_post(
+        add_resp = await http_post(
             f"{settings.RENTOK_API_BASE_URL}/bookingBot/addPayment",
             json={
-                "user_id": safe_user_id,
+                "user_id": user_id,
                 "pg_id": pg_id,
                 "pg_number": pg_number,
                 "amount": amount,
@@ -150,8 +153,23 @@ async def verify_payment(user_id: str, **kwargs) -> str:
             },
         )
     except Exception as e:
-        logger.warning("addPayment API failed for user=%s pg_id=%s: %s", user_id, pg_id, e)
+        logger.error("addPayment API failed for user=%s pg_id=%s: %s", user_id, pg_id, e)
         return "Payment recording failed — please contact support to confirm your payment was received."
+
+    if isinstance(add_resp, dict):
+        status = add_resp.get("status")
+        rejected = (
+            add_resp.get("success") is False
+            or (isinstance(status, int) and status >= 400)
+            or (isinstance(status, str) and status.isdigit() and int(status) >= 400)
+            or (isinstance(status, str) and status.lower() == "error")
+        )
+        if rejected:
+            logger.error(
+                "addPayment rejected by backend for user=%s pg_id=%s: %s",
+                user_id, pg_id, add_resp.get("message", add_resp),
+            )
+            return "Payment recording failed — please contact support to confirm your payment was received."
 
     # Update lead status to Token
     info_map = get_property_info_map(user_id)

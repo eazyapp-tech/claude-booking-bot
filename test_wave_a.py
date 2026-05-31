@@ -20,6 +20,10 @@ fabricated outcomes to users:
      explicit failure body, leaks nothing on transport error, and FULLY clears
      the reserve_bed idempotency entry (lock AND cached result) so a
      reserve→cancel→reserve sequence runs fresh instead of replaying "reserved".
+  6. verify_payment      — inspects the /bookingBot/addPayment body (which is a
+     200-envelope carrying status:500 on insert failure) and never reports
+     "Payment verified successfully" on a backend rejection; sends the FULL
+     user_id (the column is `text`, no truncation) so the record is matchable.
 
 Deterministic: an in-memory fake replaces the Redis client. No network, no LLM.
 Run: `python test_wave_a.py`.
@@ -313,6 +317,56 @@ out = _cancel(exc=RuntimeError("https://apiv2.rentok.com/x 500 Traceback SEKRET"
 check("5f transport error → friendly message", "Sorry, I couldn't cancel your booking" in out, out)
 for leak in ("https", "500", "Traceback", "SEKRET", "apiv2"):
     check(f"5g no leak of '{leak}'", leak not in out, out)
+
+
+# --------------------------------------------------------------------------- #
+# 6. verify_payment — honest recording, full user_id, no silent success
+# --------------------------------------------------------------------------- #
+print("\n[6] verify_payment — body inspection + full user_id")
+import tools.booking.payment as pay  # noqa: E402
+
+pay.get_payment_info = lambda uid: {
+    "pg_name": "Test PG", "pg_id": "pg1", "pg_number": "34",
+    "amount": "1000", "short_link": "Ul5wqM",
+}
+pay.get_property_info_map = lambda uid: []  # no eazypg match → skip Token CRM update
+pay.get_user_brand = lambda uid: ""
+pay.clear_payment_info = lambda uid: None
+pay.track_funnel = lambda *a, **k: None
+pay.cancel_followups = lambda *a, **k: None
+
+_LONG_UID = "web_user_1748000000000_abcdef"  # > 12 chars; must NOT be truncated
+_captured = {}
+
+
+def _verify(response=None, exc=None):
+    async def _fn(url, json=None, **k):
+        _captured["json"] = json
+        if exc:
+            raise exc
+        return response
+    pay.http_post = _fn
+    return arun(pay.verify_payment(user_id=_LONG_UID))
+
+
+# Success body (status:200) ⇒ verified, and the full user_id is recorded.
+out = _verify({"status": 200, "message": "Successfully inserted", "data": {}})
+check("6a success body → verified message", "Payment verified successfully" in out, out)
+check("6b full user_id sent (not truncated to 12)",
+      _captured.get("json", {}).get("user_id") == _LONG_UID, _captured.get("json"))
+
+# Backend insert failure arrives as a 200-envelope with status:500 in the body.
+out = _verify({"status": 500, "message": "Error inserting"})
+check("6c backend 500 body → 'recording failed'", "Payment recording failed" in out, out)
+check("6d backend 500 body → NOT a false success", "verified successfully" not in out, out)
+
+# success:false marker is also an honest failure.
+out = _verify({"success": False, "message": "rejected"})
+check("6e success:false body → 'recording failed'", "Payment recording failed" in out, out)
+
+# Transport error ⇒ honest failure, never a false success.
+out = _verify(exc=RuntimeError("https://apiv2.rentok.com/x 502"))
+check("6f transport error → 'recording failed'", "Payment recording failed" in out, out)
 
 
 # --------------------------------------------------------------------------- #
