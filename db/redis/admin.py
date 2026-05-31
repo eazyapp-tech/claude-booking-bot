@@ -102,12 +102,13 @@ def clear_human_mode(uid: str, brand_hash: str | None = None) -> None:
 # Session cost tracking (per-user, 7-day TTL)
 # ---------------------------------------------------------------------------
 
-def increment_session_cost(uid: str, tokens_in: int, tokens_out: int, model: str) -> None:
-    """Accumulate token usage and USD cost for a user's session (7-day TTL)."""
-    from config import settings
-    rates = getattr(settings, "COST_PER_MTK", {}).get(model, {"in": 0.0, "out": 0.0})
-    cost_usd = (tokens_in * rates["in"] + tokens_out * rates["out"]) / 1_000_000
+def increment_session_cost(uid: str, tokens_in: int, tokens_out: int, cost_usd: float) -> None:
+    """Accumulate token usage and USD cost for a user's session (7-day TTL).
 
+    `cost_usd` is precomputed by the caller (core.claude._usage_cost) so cache
+    reads/writes are billed at their correct multipliers — recomputing here at
+    the full input rate would over-count cached tokens.
+    """
     key = f"{uid}:session_cost"
     pipe = _r().pipeline()
     pipe.hincrbyfloat(key, "tokens_in", tokens_in)

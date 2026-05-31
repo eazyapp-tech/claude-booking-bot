@@ -167,6 +167,7 @@ from db.redis.brand import (  # noqa: F401
     set_brand_config,
     get_brand_wa_config,
     get_brand_by_token,
+    get_default_brand_config,
     # Per-brand feature flags
     get_brand_flags,
     set_brand_flag,

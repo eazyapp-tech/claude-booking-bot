@@ -30,11 +30,20 @@ class Settings(BaseSettings):
     WHATSAPP_ACCESS_TOKEN: Optional[str] = None
     WHATSAPP_VERIFY_TOKEN: str = "booking-bot-verify"
 
+    # Webhook payload authenticity (HMAC-SHA256 over the RAW request body).
+    # WHATSAPP_APP_SECRET: Meta app secret — when set, POST /webhook/whatsapp requires a
+    #   valid X-Hub-Signature-256 header. When empty, falls back to legacy X-API-Key auth.
+    # PAYMENT_WEBHOOK_SECRET: shared secret for POST /webhook/payment — when set, requires a
+    #   valid X-Webhook-Signature header. When empty, falls back to legacy X-API-Key auth.
+    WHATSAPP_APP_SECRET: str = ""
+    PAYMENT_WEBHOOK_SECRET: str = ""
+
     # Models
     HAIKU_MODEL: str = "claude-haiku-4-5-20251001"
     SONNET_MODEL: str = "claude-sonnet-4-6"
 
-    # Cost per million tokens (USD) — used by increment_session_cost
+    # Cost per million tokens (USD) — base input/output rates; cache reads
+    # billed 0.1x and cache writes 1.25x via core.claude._usage_cost
     COST_PER_MTK: dict = {
         "claude-haiku-4-5-20251001": {"in": 0.80,  "out": 4.00},
         "claude-sonnet-4-6":         {"in": 3.00,  "out": 15.00},
@@ -42,6 +51,11 @@ class Settings(BaseSettings):
 
     # API auth (set in .env; if empty, auth is disabled)
     API_KEY: Optional[str] = None
+
+    # Multi-tenant web channel: brand used for tokenless web traffic (demo / no ?brand= link).
+    # The web channel NEVER trusts a client-supplied brand_hash/pg_ids — tenant identity is
+    # resolved server-side from the verified link token, falling back to this default brand.
+    DEFAULT_BRAND_API_KEY: str = "OxOtel1234"
 
     # Web Intelligence
     TAVILY_API_KEY: Optional[str] = None  # Tavily search API key for web intelligence

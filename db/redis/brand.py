@@ -58,6 +58,16 @@ def get_brand_by_token(token: str):
     return _json_get(f"brand_config:{brand_hash.decode()}")
 
 
+def get_default_brand_config():
+    """Return the configured default brand config for tokenless web traffic, or None.
+
+    Used by the web channel when no valid link token is supplied (demo / direct visits).
+    Resolved server-side from settings.DEFAULT_BRAND_API_KEY — never from the request.
+    """
+    from config import settings
+    return get_brand_config(settings.DEFAULT_BRAND_API_KEY)
+
+
 # ---------------------------------------------------------------------------
 # Per-brand feature flags (Phase 2 — brand-scoped flag overrides)
 # ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from config import settings
 from core.auth import verify_api_key
+from core.webhook_security import verify_whatsapp_signature, verify_payment_signature
 from core.log import get_logger
 from core.pipeline import run_pipeline
 from core.rate_limiter import check_rate_limit, RateLimitExceeded
@@ -166,7 +167,7 @@ async def verify_whatsapp_webhook(request: Request):
 # WhatsApp incoming messages (POST)
 # ---------------------------------------------------------------------------
 
-@router.post("/webhook/whatsapp", dependencies=[Depends(verify_api_key)])
+@router.post("/webhook/whatsapp", dependencies=[Depends(verify_whatsapp_signature)])
 async def whatsapp_webhook(request: Request):
     """Handle incoming WhatsApp messages (Meta + Interakt webhook)."""
     try:
@@ -291,7 +292,7 @@ async def whatsapp_webhook(request: Request):
 # Payment confirmation webhook
 # ---------------------------------------------------------------------------
 
-@router.post("/webhook/payment", dependencies=[Depends(verify_api_key)])
+@router.post("/webhook/payment", dependencies=[Depends(verify_payment_signature)])
 async def payment_webhook(request: Request):
     """Handle payment confirmation callback from Rentok."""
     try:

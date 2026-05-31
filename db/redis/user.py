@@ -444,11 +444,16 @@ def build_returning_user_context(user_id: str) -> str:
     if loc and budget:
         parts.append("→ Skip qualifying questions — go straight to search or pick up where they left off")
 
-    # Inject last search results for cross-session context
+    # Inject last search results for cross-session context. Property names come
+    # from the Rentok API (third-party text) — fence them so a malicious listing
+    # name replayed from memory can't act as an instruction. Matches the fence
+    # applied when these names are first surfaced in tools/broker/search.py.
     last_search = get_last_search_results(user_id)
     if last_search:
         names = ", ".join(p["property_name"] for p in last_search if p.get("property_name"))
         if names:
-            parts.append(f"Last search results (cached in property_info_map): {names}")
+            from core.untrusted import fence
+            fenced = fence(names, "property listing names from a prior Rentok search")
+            parts.append(f"Last search results (cached in property_info_map):\n{fenced}")
 
     return "\n".join(parts)

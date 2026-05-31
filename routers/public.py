@@ -26,11 +26,12 @@ async def get_public_brand_config(token: str):
     config = get_brand_by_token(token)
     if not config:
         raise HTTPException(status_code=404, detail="Brand not found")
+    # brand_hash is intentionally NOT exposed: the server derives tenant identity
+    # from the link token itself, so clients never need (or get) the raw hash.
     return {
         "pg_ids": config.get("pg_ids", []),
         "brand_name": config.get("brand_name", ""),
         "cities": config.get("cities", ""),
         "areas": config.get("areas", ""),
-        "brand_hash": config.get("brand_hash", ""),
         "is_configured": bool(config.get("pg_ids")),
     }
