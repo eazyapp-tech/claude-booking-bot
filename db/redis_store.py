@@ -178,4 +178,5 @@ from db.redis import (  # noqa: F401
     idem_begin,
     idem_complete,
     idem_release,
+    idem_clear,
 )

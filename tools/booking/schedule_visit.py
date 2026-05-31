@@ -4,6 +4,7 @@ from config import settings
 from core.log import get_logger
 from db.redis_store import get_property_info_map, get_account_values, track_funnel, get_user_phone, get_aadhar_user_name, get_user_memory, record_visit_scheduled, schedule_followup, get_user_brand, track_property_event
 from core.followup import create_followup_state
+from utils.api import user_error
 from utils.date import transcribe_date
 from utils.properties import find_property as _find_property
 from utils.retry import http_post
@@ -72,9 +73,9 @@ async def save_visit_time(
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 400:
             return "There is already a scheduled visit for this property or a visit on the same date. Would you like to see your scheduled visits?"
-        return f"Error scheduling visit: {str(e)}"
+        return user_error("schedule your visit", e, logger=logger)
     except Exception as e:
-        return f"Error scheduling visit: {str(e)}"
+        return user_error("schedule your visit", e, logger=logger)
 
     # Bug fix: 'and' was wrong — 200 + success:false would fall through silently.
     # Now: any non-success body is treated as a failure regardless of HTTP status.
@@ -187,10 +188,27 @@ async def _create_external_lead(
         "firebase_id": f"cust_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}",
     }
     try:
-        await http_post(
+        data = await http_post(
             f"{settings.RENTOK_API_BASE_URL}/tenant/addLeadFromEazyPGID",
             json=payload,
         )
+        # The CRM returns 200 even when it rejects the lead, so a clean HTTP
+        # status is not proof of success — inspect the body. Only an *explicit*
+        # failure marker counts as a failure; success shapes that omit a flag
+        # (the common case) still pass, so we never raise a false negative.
+        if isinstance(data, dict):
+            status = data.get("status")
+            failed = (
+                data.get("success") is False
+                or (isinstance(status, int) and status >= 400)
+                or (isinstance(status, str) and status.lower() == "error")
+            )
+            if failed:
+                logger.error(
+                    "lead creation rejected by CRM for user=%s eazypg_id=%s: %s",
+                    user_id, eazypg_id, data.get("message", data),
+                )
+                return False
         return True
     except Exception as e:
         logger.error("lead creation failed for user=%s eazypg_id=%s: %s", user_id, eazypg_id, e)

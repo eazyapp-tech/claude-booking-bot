@@ -8,6 +8,24 @@ class RentokAPIError(Exception):
     pass
 
 
+def user_error(action: str, exc: object = "", *, logger=None) -> str:
+    """Clean, user-facing error message that never leaks internals.
+
+    The real exception (which can carry URLs, HTTP status codes, tracebacks, or
+    raw Python error text) is logged when a logger is supplied, but never put in
+    the returned string — the user only ever sees a friendly apology.
+
+    `action` is a short verb phrase describing what failed, e.g. "cancel your
+    booking" → "Sorry, I couldn't cancel your booking right now ...".
+    """
+    if logger is not None and exc:
+        logger.error("%s failed: %s", action, exc)
+    return (
+        f"Sorry, I couldn't {action} right now due to a temporary issue. "
+        "Please try again in a moment."
+    )
+
+
 def check_rentok_response(data: dict, context: str = "") -> dict:
     """Validate Rentok API response. Raises RentokAPIError if payload indicates failure."""
     status = data.get("status")

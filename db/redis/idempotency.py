@@ -51,3 +51,17 @@ def idem_complete(idem_key: str, result: str, window: int) -> None:
 def idem_release(idem_key: str) -> None:
     """Release the lock without caching — a failed execution should be retryable."""
     _r().delete(_lock_key(idem_key))
+
+
+def idem_clear(idem_key: str) -> None:
+    """Fully invalidate a key: drop BOTH the in-flight lock and the cached result.
+
+    idem_release only drops the lock, so a completed result cached by
+    idem_complete would still be replayed for the rest of the window. When an
+    external event makes that cached side-effect stale — e.g. a booking is
+    cancelled and the user should be able to re-reserve immediately — the result
+    must be cleared too, otherwise the next call replays the old "reserved"
+    answer instead of running a fresh reservation.
+    """
+    _r().delete(_lock_key(idem_key))
+    _r().delete(_result_key(idem_key))
