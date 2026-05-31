@@ -1,5 +1,14 @@
 # RentOK API Reference
 
+> ⚠️ **SUPERSEDED (2026-05-31) by [`VERIFIED_RENTOK_CONTRACT.md`](VERIFIED_RENTOK_CONTRACT.md).**
+> That document is source-verified against the live rentok-backend codebase
+> (route → controller → service, re-verified by 4 agents at ~95% accuracy) and
+> **wins wherever the two disagree.** This file is *inferred/probed* and is kept
+> only for its historical test-result detail. Before trusting any endpoint shape,
+> ID model, or filter enum here, cross-check the verified contract — several claims
+> below were corrected there (notably A5 `getAvailableRoomFromEazyPGID`, which is
+> not a real route, and the `lead_source="bookingBot00"` requirement for C1).
+>
 > **Reverse-engineered from source code + live integration testing (March 2026)**
 > Base URL: `https://apiv2.rentok.com`
 > Purpose: Complete reference for developers working on the EazyPG booking bot integration. Produced independently of the RentOK team.

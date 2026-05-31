@@ -40,7 +40,8 @@ jobs:
             test_server_stop.py \
             test_engine_contract.py \
             test_tool_boundary.py \
-            test_wave_a.py; do
+            test_wave_a.py \
+            test_contract_alignment.py; do
             echo "::group::$t"
             python "$t"
             echo "::endgroup::"

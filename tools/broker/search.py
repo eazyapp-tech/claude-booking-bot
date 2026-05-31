@@ -254,10 +254,12 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
     }
     if min_budget:
         payload["rent_starts_from"] = min_budget
-    if unit_types:
-        payload["unit_types_available"] = unit_types
-    if pg_available_for and pg_available_for in ["All Boys", "All Girls"]:
-        payload["pg_available_for"] = pg_available_for
+    # NOTE: `unit_types_available` and `pg_available_for` are NOT sent to the search API.
+    # Ground truth (RentOk backend): both are free-text, per-property enums — pg_available_for
+    # is an exact IN-match on stored phrases (e.g. "Male & Female"), unit_types_available is an
+    # array-overlap on uppercase tokens (e.g. SINGLESHARING). Client-guessed values like
+    # "All Boys" / "double sharing" never match → silent 0 results. We instead return the full
+    # candidate set and let utils/scoring.py rank gender/unit-type as preferences post-search.
     if sharing_types:
         payload["sharing_type_enabled"] = sharing_types
 
@@ -287,8 +289,7 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
             "rent_ends_to": max(max_budget * 3, 300000) if max_budget else 10000000,
             "pg_ids": pg_ids,
         }
-        if unit_types:
-            r1_payload["unit_types_available"] = unit_types
+        # unit_types_available deliberately omitted — see note on the base payload above.
         logger.debug("relaxation round 1 payload: %s", r1_payload)
         # A relaxation round that hard-fails just yields no extra results — we
         # already have the base set, so treat None as an empty top-up here.

@@ -180,7 +180,11 @@ async def _create_external_lead(
         "name": name,
         "gender": gender,
         "rent_range": budget,
-        "lead_source": "Booking Bot",
+        # Ground truth (RentOk backend): C1 GET /tenant/get-tenant_uuid resolves
+        # leads ONLY where lead_source="bookingBot00" (AND status=3). Any other
+        # source string is invisible to the payment-link flow, so the bot MUST
+        # stamp its leads with this exact canonical value — not a display name.
+        "lead_source": "bookingBot00",
         "visit_date": visit_date,
         "visit_time": visit_time,
         "visit_type": visit_type,
