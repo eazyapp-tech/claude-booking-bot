@@ -7,7 +7,7 @@ from utils.properties import find_property
 
 TOOL_SCHEMA = {
     "name": "fetch_room_details",
-    "description": "Get REAL-TIME bed availability per room (beds_available count, sharing type, per-room amenities). Uses a different API endpoint from fetch_property_details. Call alongside fetch_property_details for a complete room picture. Falls back to search cache data (sharing types, amenities, rent) if live availability is empty.",
+    "description": "Get room configurations for a property: room name, sharing type, and rent per room. Uses a different API endpoint from fetch_property_details. Call alongside fetch_property_details for a complete room picture. NOTE: this returns room layouts, not live per-bed availability — for confirmed vacancy the user should schedule a visit. Falls back to search cache data (sharing types, amenities, rent) if no rooms are returned.",
     "input_schema": {
         "type": "object",
         "additionalProperties": False,
@@ -17,6 +17,23 @@ TOOL_SCHEMA = {
         "required": ["property_name"],
     },
 }
+
+# Ground truth (RentOk backend, verified 2026-05-31): rooms come from
+# POST /bookingBot/get-room-details (json={"eazypg_id": ...}). The bot's old
+# GET /bookingBot/getAvailableRoomFromEazyPGID route does NOT exist (real 404).
+# Response wrapper is {status, message, data:{ rooms:[...], pg_name, ... }} — the
+# room list is nested at data.data.rooms, NOT data.rooms. Unknown eazypg_id →
+# HTTP 200 with body status 404 and data:{}. Each room has: id, name, rent,
+# tags, type_tags, sharing_type — there is no beds_available / live bed count.
+_ROOM_DETAILS_URL = f"{settings.RENTOK_API_BASE_URL}/bookingBot/get-room-details"
+
+
+def _extract_rooms(data: dict) -> list:
+    """Pull the room list out of the get-room-details envelope (data.data.rooms)."""
+    inner = data.get("data") or {}
+    if isinstance(inner, dict):
+        return inner.get("rooms", [])
+    return []
 
 
 async def _fetch_rooms_raw(eazypg_id: str) -> list:
@@ -30,13 +47,9 @@ async def _fetch_rooms_raw(eazypg_id: str) -> list:
         return []
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{settings.RENTOK_API_BASE_URL}/bookingBot/getAvailableRoomFromEazyPGID",
-                params={"eazypg_id": eazypg_id},
-            )
+            resp = await client.post(_ROOM_DETAILS_URL, json={"eazypg_id": eazypg_id})
             resp.raise_for_status()
-            data = resp.json()
-            return data.get("rooms", data.get("data", []))
+            return _extract_rooms(resp.json())
     except Exception:
         return []
 
@@ -52,16 +65,13 @@ async def fetch_room_details(user_id: str, property_name: str, **kwargs) -> str:
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{settings.RENTOK_API_BASE_URL}/bookingBot/getAvailableRoomFromEazyPGID",
-                params={"eazypg_id": eazypg_id},
-            )
+            resp = await client.post(_ROOM_DETAILS_URL, json={"eazypg_id": eazypg_id})
             resp.raise_for_status()
             data = resp.json()
     except Exception as e:
         return f"Error fetching room details: {str(e)}"
 
-    rooms = data.get("rooms", data.get("data", []))
+    rooms = _extract_rooms(data)
     if not rooms:
         sharing_types = prop.get("sharing_types", [])
         amenities_raw = prop.get("amenities", "")
@@ -70,7 +80,7 @@ async def fetch_room_details(user_id: str, property_name: str, **kwargs) -> str:
         amenities_str = parse_amenities(amenities_raw)
         if sharing_str or amenities_str:
             name = prop.get("property_name", property_name)
-            result = f"Live bed availability for '{name}' isn't showing right now. From our listings:\n"
+            result = f"Room details for '{name}' aren't showing right now. From our listings:\n"
             if sharing_str:
                 result += f"- Sharing options: {sharing_str}\n"
             if amenities_str:
@@ -81,17 +91,16 @@ async def fetch_room_details(user_id: str, property_name: str, **kwargs) -> str:
             return result
         return f"No room data available for '{property_name}'. Schedule a visit to check in person."
 
-    result = f"Available rooms at '{prop.get('property_name', property_name)}':\n"
+    result = f"Rooms at '{prop.get('property_name', property_name)}':\n"
     for room in rooms:
-        # API may use room_name, room_type, name, or room_no — try all
-        name = (room.get("room_name") or room.get("room_type") or room.get("name")
-                or (f"Room {room.get('room_no', room.get('number', ''))}" if room.get("room_no") or room.get("number") else "Room"))
+        name = room.get("name") or room.get("room_name") or room.get("room_type") or "Room"
         sharing = room.get("sharing_type", "")
-        available = room.get("beds_available", room.get("available", ""))
-        amenities = parse_amenities(room.get("amenities", ""))
-        result += f"- {name}: {sharing} sharing, Available beds: {available}"
-        if amenities:
-            result += f", Amenities: {amenities}"
-        result += "\n"
-
+        rent = room.get("rent", "")
+        line = f"- {name}"
+        if sharing:
+            line += f": {sharing} sharing"
+        if rent:
+            line += f", Rent: ₹{rent}/mo"
+        result += line + "\n"
+    result += "(Room layouts — for confirmed bed availability, schedule a visit.)"
     return result

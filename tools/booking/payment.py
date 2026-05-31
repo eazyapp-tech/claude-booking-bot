@@ -185,7 +185,8 @@ async def verify_payment(user_id: str, **kwargs) -> str:
                     "name": name,
                     "gender": gender,
                     "rent_range": budget,
-                    "lead_source": "Booking Bot",
+                    # Canonical bot source — C1 get-tenant_uuid resolves only this.
+                    "lead_source": "bookingBot00",
                     "visit_date": "",
                     "visit_time": "",
                     "visit_type": "",
