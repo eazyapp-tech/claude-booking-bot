@@ -38,7 +38,8 @@ jobs:
             test_webhook_signature.py \
             test_cost_accounting.py \
             test_server_stop.py \
-            test_engine_contract.py; do
+            test_engine_contract.py \
+            test_tool_boundary.py; do
             echo "::group::$t"
             python "$t"
             echo "::endgroup::"

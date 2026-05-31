@@ -199,3 +199,10 @@ from db.redis.quality import (  # noqa: F401
     get_conversation_quality,
     update_conversation_quality,
 )
+
+# Idempotency domain (Wave 3) — burst-dedup for write-path tools
+from db.redis.idempotency import (  # noqa: F401
+    idem_begin,
+    idem_complete,
+    idem_release,
+)

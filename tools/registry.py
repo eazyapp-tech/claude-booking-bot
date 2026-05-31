@@ -71,6 +71,12 @@ def get_all_handlers() -> dict[str, Callable]:
     return dict(_TOOL_HANDLERS)
 
 
+def get_input_schema(name: str) -> dict | None:
+    """Return a tool's JSON input_schema for boundary validation (None if unknown)."""
+    schema = _TOOL_SCHEMAS.get(name)
+    return schema.get("input_schema") if schema else None
+
+
 def get_schemas_by_names(tool_names: list[str]) -> list[dict]:
     """Return schemas for specific tool names (for skill-based tool filtering)."""
     return [_TOOL_SCHEMAS[n] for n in tool_names if n in _TOOL_SCHEMAS]
