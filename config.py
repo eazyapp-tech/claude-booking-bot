@@ -57,6 +57,20 @@ class Settings(BaseSettings):
     # API auth (set in .env; if empty, auth is disabled)
     API_KEY: Optional[str] = None
 
+    # Admin-panel login gate (ID + password → brand API key).
+    # The admin SPA no longer ships the raw brand key; it POSTs credentials to
+    # /admin/login, which validates them server-side and returns the key the
+    # browser then uses as X-API-Key. Credentials live ONLY in env (never in
+    # the bundle / git). Set ADMIN_LOGIN_PASSWORD (plaintext, hashed at load)
+    # OR ADMIN_LOGIN_PASSWORD_SHA256 (preferred). If neither is set, /admin/login
+    # returns 503 and the panel cannot be entered.
+    ADMIN_LOGIN_USERNAME: str = "oxotel"
+    ADMIN_LOGIN_PASSWORD: str = ""          # convenience: plaintext in env, sha256'd in memory
+    ADMIN_LOGIN_PASSWORD_SHA256: str = ""   # preferred: store only the hex digest
+    ADMIN_LOGIN_API_KEY: str = ""           # key returned on success; falls back to DEFAULT_BRAND_API_KEY
+    ADMIN_LOGIN_MAX_FAILS: int = 10         # failed attempts before throttle kicks in
+    ADMIN_LOGIN_THROTTLE_SECONDS: int = 900 # 15-min lockout window for brute-force protection
+
     # Multi-tenant web channel: brand used for tokenless web traffic (demo / no ?brand= link).
     # The web channel NEVER trusts a client-supplied brand_hash/pg_ids — tenant identity is
     # resolved server-side from the verified link token, falling back to this default brand.

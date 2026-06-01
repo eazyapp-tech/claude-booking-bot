@@ -13,6 +13,7 @@ Routes:
   GET    /admin/leads
   GET    /admin/flags
   POST   /admin/flags
+  POST   /admin/login
   GET    /admin/brand-config
   POST   /admin/brand-config
   POST   /admin/broadcast
@@ -786,6 +787,34 @@ async def admin_set_flags(request: Request, brand_hash: str = Depends(require_ad
 
     # Return all effective flags so frontend reflects the merged state
     return {"ok": True, "changed": changed, "effective": get_effective_flags(brand_hash)}
+
+
+# ---------------------------------------------------------------------------
+# Admin login (ID + password → brand API key). No auth dependency — this IS
+# the gate. Credentials validated server-side; the raw key never ships in the
+# frontend bundle. See core/admin_login.py.
+# ---------------------------------------------------------------------------
+
+@router.post("/admin/login")
+async def admin_login(request: Request):
+    from core.admin_login import verify_admin_login
+
+    body = await request.json()
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="username and password are required")
+
+    api_key, reason = verify_admin_login(username, password)
+    if reason == "ok":
+        return {"api_key": api_key}
+    if reason == "unconfigured":
+        raise HTTPException(status_code=503, detail="Admin login is not configured")
+    if reason == "throttled":
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    if reason == "misconfigured":
+        raise HTTPException(status_code=503, detail="Admin login misconfigured")
+    raise HTTPException(status_code=401, detail="Invalid username or password")
 
 
 # ---------------------------------------------------------------------------
