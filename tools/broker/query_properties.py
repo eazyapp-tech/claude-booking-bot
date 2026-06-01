@@ -1,6 +1,7 @@
 import httpx
 
 from config import settings
+from db.redis.property import get_property_info_map, set_property_info_map
 from db.redis_store import get_whitelabel_pg_ids
 from utils.api import RentokAPIError, check_rentok_response
 
@@ -26,7 +27,7 @@ async def fetch_properties_by_query(user_id: str, query: str, **kwargs) -> str:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 f"{settings.RENTOK_API_BASE_URL}/bookingBot/fetch-all-properties",
-                json={"pg_ids": pg_ids},
+                json={"pg_ids": pg_ids, "search_query": query},
             )
             resp.raise_for_status()
             data = resp.json()
@@ -43,25 +44,48 @@ async def fetch_properties_by_query(user_id: str, query: str, **kwargs) -> str:
     # and "id" (UUID) / "pg_id" (Firebase UID) for identifiers.
     properties = data.get("data", data.get("properties", []))
     if not properties:
-        return "No properties found."
-
-    matches = []
-    query_lower = query.strip().lower()
-    for p in properties:
-        # Name field is "pg_name" in the real API response
-        name = p.get("pg_name", p.get("property_name", p.get("name", ""))).strip().lower()
-        if query_lower in name or name in query_lower:
-            matches.append(p)
-
-    if not matches:
         return f"No properties matching '{query}' found."
 
-    results = []
-    for p in matches[:5]:
-        display_name = p.get("pg_name") or p.get("property_name") or p.get("name", "")
+    # Map API response shape → cache shape used by find_property and all booking tools.
+    # find_property looks up "property_name"; booking tools read eazypg_id, personal_contact, pg_id, id.
+    def _to_cache_shape(p: dict) -> dict:
         ms_data = p.get("microsite_data") or {}
-        about = (ms_data.get("about") or "")[:80]
-        link = p.get("microsite_link", "N/A")
-        results.append(f"- {display_name} | {about} | Link: {link}")
+        # personal_contact (operator's private number) is not returned by this
+        # unauthenticated endpoint. Use the public-facing customer_support_number
+        # as the property_contact key for the shortlist API instead.
+        contact = ms_data.get("customer_support_number", "") or ms_data.get("customer_support_whatsapp", "")
+        return {
+            "property_name": p.get("pg_name", ""),
+            "pg_id": p.get("pg_id", ""),
+            "id": p.get("id", ""),
+            "eazypg_id": p.get("eazypg_id", ""),
+            "personal_contact": contact,
+            "pg_available_for": p.get("pg_available_for", ""),
+            "rent_starts_from": p.get("rent_starts_from"),
+            "address_line_1": p.get("address_line_1", ""),
+            "address_line_2": p.get("address_line_2", ""),
+            "microsite_link": p.get("microsite_link", ""),
+            "common_amenities": ms_data.get("common_amenities", []),
+        }
+
+    new_entries = [_to_cache_shape(p) for p in properties]
+
+    # Merge into existing cache (keyed by pg_id) so a name search doesn't wipe
+    # properties the user already found via location search.
+    existing = get_property_info_map(user_id)
+    existing_by_pg_id = {e["pg_id"]: e for e in existing if e.get("pg_id")}
+    for entry in new_entries:
+        existing_by_pg_id[entry["pg_id"]] = entry
+    set_property_info_map(user_id, list(existing_by_pg_id.values()))
+
+    results = []
+    for p in properties[:5]:
+        name = p.get("pg_name", "")
+        rent = p.get("rent_starts_from")
+        addr = " ".join(filter(None, [p.get("address_line_1"), p.get("address_line_2")]))
+        gender = p.get("pg_available_for", "")
+        rent_str = f"₹{rent}/mo" if rent else "rent N/A"
+        line = f"- {name} | {rent_str} | {gender} | {addr}"
+        results.append(line)
 
     return f"Properties matching '{query}':\n" + "\n".join(results)

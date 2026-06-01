@@ -207,3 +207,10 @@ from db.redis.idempotency import (  # noqa: F401
     idem_release,
     idem_clear,
 )
+
+# Eval domain — CI stress-test result storage
+from db.redis.eval import (  # noqa: F401
+    save_eval_run,
+    get_eval_last_run,
+    get_eval_history,
+)
