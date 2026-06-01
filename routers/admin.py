@@ -22,6 +22,7 @@ Routes:
   POST   /admin/properties/{prop_id}/documents
   DELETE /admin/properties/{prop_id}/documents/{doc_id}
   POST   /admin/backfill-brands
+  POST   /admin/backfill-message-brand-hash
   POST   /admin/leads/{uid}/outcome
 """
 
@@ -303,7 +304,7 @@ async def admin_analytics(days: int = 7, brand_hash: str = Depends(require_admin
         # Extended data (kept for backward compat)
         "funnel": funnel_totals,
         "feedback": feedback,
-        "messages": message_volume,
+        "messages": daily,
         "rate_limits": rate_limits,
         "meta": {
             "days": days,
@@ -1144,3 +1145,64 @@ async def admin_errors(
         "offset": offset,
         "limit": limit,
     }
+
+
+# ---------------------------------------------------------------------------
+# Eval health — CI stress-test results
+# ---------------------------------------------------------------------------
+
+class EvalRunRequest(BaseModel):
+    run_at: str
+    passed: int
+    warned: int
+    failed: int
+    total: int
+    scenarios: list[dict] | None = None
+    trigger: str | None = None
+    commit: str | None = None
+
+
+@router.get("/admin/eval-health")
+async def admin_get_eval_health(brand_hash: str = Depends(require_admin_brand_key)):
+    """Return the last stored eval run and history (last 10 runs)."""
+    from db.redis.eval import get_eval_last_run, get_eval_history
+    return {"last_run": get_eval_last_run(), "history": get_eval_history(limit=10)}
+
+
+@router.post("/admin/eval-health")
+async def admin_post_eval_health(
+    body: EvalRunRequest, brand_hash: str = Depends(require_admin_brand_key)
+):
+    """Record a new eval run result. Call this from CI after running stress_test_broker.py."""
+    from db.redis.eval import save_eval_run
+    save_eval_run(body.model_dump())
+    return {"ok": True}
+
+
+@router.post("/admin/backfill-message-brand-hash")
+async def admin_backfill_message_brand_hash(brand_hash: str = Depends(require_admin_brand_key)):
+    """One-time migration: stamp booking_messages rows that have NULL brand_hash with the
+    calling brand's hash.  Safe to call multiple times — only touches NULL rows.
+    """
+    if pg._pool is None:
+        raise HTTPException(status_code=503, detail="Database pool not available")
+    try:
+        null_before = await pg._pool.fetchval(
+            "SELECT COUNT(*) FROM booking_messages WHERE brand_hash IS NULL"
+        )
+        await pg._pool.execute(
+            "UPDATE booking_messages SET brand_hash = $1 WHERE brand_hash IS NULL",
+            brand_hash,
+        )
+        null_after = await pg._pool.fetchval(
+            "SELECT COUNT(*) FROM booking_messages WHERE brand_hash IS NULL"
+        )
+        return {
+            "ok": True,
+            "updated": null_before - null_after,
+            "null_remaining": null_after,
+            "brand_hash": brand_hash,
+        }
+    except Exception as exc:
+        logger.error("backfill-message-brand-hash failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
