@@ -436,7 +436,10 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
         long_val = (p.get("p_longitude") or p.get("p_long") or p.get("p_pg_longitude")
                     or p.get("longitude") or p.get("long") or p.get("lng")
                     or p.get("_geocoded_lng") or "")
-        phone = p.get("p_phone_number", "")
+        # Property contact lives in p_personal_contact; p_phone_number is usually
+        # absent. The shortlist API requires a non-empty property_contact, so prefer
+        # the populated field. Server-side only — never rendered to users.
+        phone = p.get("p_personal_contact") or p.get("p_phone_number") or ""
         min_token = p.get("p_min_token_amount", 1000)
         microsite_url = p.get("p_microsite_url", p.get("microsite_url", ""))
         match_score = p.get("_custom_score", p.get("p_match_score", p.get("match_score", "")))
