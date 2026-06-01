@@ -467,11 +467,10 @@ async def update_document_embedding(doc_id: int, embedding: list[float]) -> None
     if _pool is None or not _pgvector_available:
         return
     try:
-        import numpy as np
-        vec = np.array(embedding, dtype=np.float32)
+        vec_str = "[" + ",".join(f"{v:.8f}" for v in embedding) + "]"
         await _pool.execute(
-            "UPDATE property_documents SET embedding = $1 WHERE id = $2",
-            vec, doc_id,
+            "UPDATE property_documents SET embedding = $1::vector WHERE id = $2",
+            vec_str, doc_id,
         )
     except Exception as e:
         logger.warning("update_document_embedding(%s): %s", doc_id, e)
@@ -493,8 +492,7 @@ async def search_relevant_docs(
     if not property_ids or not categories or not query_embedding:
         return []
     try:
-        import numpy as np
-        vec = np.array(query_embedding, dtype=np.float32)
+        vec_str = "[" + ",".join(f"{v:.8f}" for v in query_embedding) + "]"
         rows = await _pool.fetch(
             """
             SELECT property_id, filename, content_text
@@ -502,10 +500,10 @@ async def search_relevant_docs(
             WHERE property_id = ANY($1::varchar[])
               AND category = ANY($2::varchar[])
               AND embedding IS NOT NULL
-            ORDER BY embedding <=> $3
+            ORDER BY embedding <=> $3::vector
             LIMIT $4
             """,
-            property_ids, categories, vec, limit,
+            property_ids, categories, vec_str, limit,
         )
         return [
             {"property_id": r["property_id"], "filename": r["filename"], "text": r["content_text"]}
