@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 import asyncpg
@@ -100,19 +100,21 @@ async def get_message_volume(start_date: str, end_date: str, brand_hash: Optiona
     if _pool is None:
         return {}
     try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
         if brand_hash:
             rows = await _pool.fetch(
                 """
                 SELECT DATE(created_at) AS day, COUNT(*) AS cnt
                 FROM booking_messages
-                WHERE created_at >= $1::date
-                  AND created_at < ($2::date + INTERVAL '1 day')
+                WHERE created_at >= $1
+                  AND created_at < ($2 + INTERVAL '1 day')
                   AND brand_hash = $3
                 GROUP BY DATE(created_at)
                 ORDER BY day
                 """,
-                start_date,
-                end_date,
+                start,
+                end,
                 brand_hash,
             )
         else:
@@ -120,13 +122,13 @@ async def get_message_volume(start_date: str, end_date: str, brand_hash: Optiona
                 """
                 SELECT DATE(created_at) AS day, COUNT(*) AS cnt
                 FROM booking_messages
-                WHERE created_at >= $1::date
-                  AND created_at < ($2::date + INTERVAL '1 day')
+                WHERE created_at >= $1
+                  AND created_at < ($2 + INTERVAL '1 day')
                 GROUP BY DATE(created_at)
                 ORDER BY day
                 """,
-                start_date,
-                end_date,
+                start,
+                end,
             )
         return {str(r["day"]): r["cnt"] for r in rows}
     except Exception as e:
