@@ -59,7 +59,7 @@ async def fetch_properties_by_query(user_id: str, query: str, **kwargs) -> str:
             "pg_id": p.get("pg_id", ""),
             "id": p.get("id", ""),
             "eazypg_id": p.get("eazypg_id", ""),
-            "personal_contact": contact,
+            "phone_number": contact,
             "pg_available_for": p.get("pg_available_for", ""),
             "rent_starts_from": p.get("rent_starts_from"),
             "address_line_1": p.get("address_line_1", ""),
