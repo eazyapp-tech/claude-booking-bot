@@ -196,6 +196,7 @@ class AnthropicEngine:
                 "max_tokens": MAX_TOKENS_RESPONSE,
                 "system": system,
                 "messages": messages,
+                "timeout": settings.LLM_REQUEST_TIMEOUT,
             }
             if cached_tools:
                 kwargs["tools"] = cached_tools
@@ -349,6 +350,7 @@ class AnthropicEngine:
                     max_tokens=MAX_TOKENS_CLASSIFY,
                     system=system,
                     messages=messages,
+                    timeout=settings.LLM_CLASSIFY_TIMEOUT,
                 )
                 raw = self._extract_text(response).strip()
                 if not raw:
@@ -384,6 +386,7 @@ class AnthropicEngine:
                     "max_tokens": MAX_TOKENS_RESPONSE,
                     "system": system,
                     "messages": messages,
+                    "timeout": settings.LLM_REQUEST_TIMEOUT,
                 }
                 if tools:
                     kwargs["tools"] = tools

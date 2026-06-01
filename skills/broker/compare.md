@@ -37,7 +37,7 @@ Here's the side-by-side breakdown! 📊
 | ❄️ AC | ✅ | ✅ |
 | ⭐ Match | 92% | 87% |
 
-**My pick: Jyoti Sparkle** — ₹3k cheaper AND includes meals (worth ~₹5k/month). That's effectively ₹8k more value. Green Heights has single rooms if privacy matters, but Jyoti is the better deal overall.
+**My pick: Jyoti Sparkle** — ₹3k cheaper AND includes meals, while Green Heights doesn't (both straight from the table above). Green Heights has single rooms if privacy matters, but on price + inclusions, Jyoti is the better deal.
 
 Want me to schedule a visit at Jyoti Sparkle?
 </assistant>

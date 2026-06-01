@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # OSRM (map distance service)
     OSRM_API_KEY: str = ""
 
+    # LLM request timeouts (seconds) — bound a single Anthropic call so a hung
+    # upstream request can't pin an agent iteration (SDK default is ~10 min).
+    LLM_REQUEST_TIMEOUT: float = 120.0
+    LLM_CLASSIFY_TIMEOUT: float = 30.0
+
     # WhatsApp (defaults from env, not hardcoded tokens)
     WHATSAPP_ACCESS_TOKEN: Optional[str] = None
     WHATSAPP_VERIFY_TOKEN: str = "booking-bot-verify"
