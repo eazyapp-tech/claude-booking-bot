@@ -537,10 +537,12 @@ def track_daily_quality(brand_hash: str = None, score: int = 0, day: str = None)
     keys = [f"quality_daily:{day}"]
     if brand_hash:
         keys.append(f"quality_daily:{brand_hash}:{day}")
+    pipe = r.pipeline()
     for key in keys:
-        r.hincrby(key, "sum", int(score))
-        r.hincrby(key, "count", 1)
-        r.expire(key, ANALYTICS_TTL)
+        pipe.hincrby(key, "sum", int(score))
+        pipe.hincrby(key, "count", 1)
+        pipe.expire(key, ANALYTICS_TTL)
+    pipe.execute()
 
 
 def get_quality_trend(brand_hash: str = None, days: int = 7) -> list[dict]:
@@ -553,8 +555,10 @@ def get_quality_trend(brand_hash: str = None, days: int = 7) -> list[dict]:
         key = f"quality_daily:{brand_hash}:{day}" if brand_hash else f"quality_daily:{day}"
         raw = r.hgetall(key)
         if raw:
-            s = int(raw.get(b"sum", raw.get("sum", 0)) or 0)
-            n = int(raw.get(b"count", raw.get("count", 1)) or 1)
+            raw_sum = raw.get(b"sum", raw.get("sum", 0)) or 0
+            raw_cnt = raw.get(b"count", raw.get("count", 1)) or 1
+            s = int(raw_sum.decode() if isinstance(raw_sum, bytes) else raw_sum)
+            n = int(raw_cnt.decode() if isinstance(raw_cnt, bytes) else raw_cnt) or 1
             result.append({"date": day, "avg": round(s / n, 1) if n else None})
         else:
             result.append({"date": day, "avg": None})

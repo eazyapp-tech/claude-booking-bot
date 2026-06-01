@@ -182,7 +182,7 @@ async def admin_analytics(days: int = 7, brand_hash: str = Depends(require_admin
     total_messages = sum(message_volume.values())
     active_users_count = get_brand_active_users_count(brand_hash)
     visits_booked = funnel_totals.get("visit", 0)
-    new_leads = funnel_totals.get("search", 0)  # anyone who ran a search = engaged lead
+    new_leads = funnel_totals.get("search", 0)  # users who ran a property search (top-of-funnel)
 
     # Chronologically sorted daily message counts for the chart
     daily = [{"date": d, "count": c} for d, c in sorted(message_volume.items())]
@@ -299,16 +299,14 @@ async def admin_analytics(days: int = 7, brand_hash: str = Depends(require_admin
     # --- Cost spike detection: flag if today > 2× 7-day avg ---
     cost_spike = None
     try:
-        USD_TO_INR_SPIKE = 95
-        today_str = date.today().isoformat()
-        today_cost = get_daily_cost(day=today_str, brand_hash=brand_hash) or 0.0
+        today_cost = get_daily_cost(day=today.isoformat(), brand_hash=brand_hash) or 0.0
         past_costs = [
-            get_daily_cost(day=(date.today() - timedelta(days=i)).isoformat(), brand_hash=brand_hash) or 0.0
+            get_daily_cost(day=(today - timedelta(days=i)).isoformat(), brand_hash=brand_hash) or 0.0
             for i in range(1, 8)
         ]
         avg_7d = sum(past_costs) / 7
-        today_inr = round(today_cost * USD_TO_INR_SPIKE, 2)
-        avg_7d_inr = round(avg_7d * USD_TO_INR_SPIKE, 2)
+        today_inr = round(today_cost * USD_TO_INR, 2)
+        avg_7d_inr = round(avg_7d * USD_TO_INR, 2)
         if avg_7d > 0 and today_cost > avg_7d * 2:
             cost_spike = {"today_inr": today_inr, "avg_7d_inr": avg_7d_inr}
     except Exception as e:
