@@ -1166,7 +1166,7 @@ class EvalRunRequest(BaseModel):
 async def admin_get_eval_health(brand_hash: str = Depends(require_admin_brand_key)):
     """Return the last stored eval run and history (last 10 runs)."""
     from db.redis.eval import get_eval_last_run, get_eval_history
-    return {"last_run": get_eval_last_run(), "history": get_eval_history(limit=10)}
+    return {"last_run": get_eval_last_run(brand_hash), "history": get_eval_history(brand_hash, limit=10)}
 
 
 @router.post("/admin/eval-health")
@@ -1175,7 +1175,7 @@ async def admin_post_eval_health(
 ):
     """Record a new eval run result. Call this from CI after running stress_test_broker.py."""
     from db.redis.eval import save_eval_run
-    save_eval_run(body.model_dump())
+    save_eval_run(brand_hash, body.model_dump())
     return {"ok": True}
 
 
