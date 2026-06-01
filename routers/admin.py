@@ -75,6 +75,7 @@ from db.redis_store import (
     track_property_event,
     track_funnel,
     update_user_memory,
+    get_quality_trend,
 )
 
 logger = get_logger("routers.admin")
@@ -252,15 +253,19 @@ async def admin_analytics(days: int = 7, brand_hash: str = Depends(require_admin
     except Exception as e:
         logger.warning("property performance aggregation failed: %s", e)
 
-    # --- Quality distribution: scan brand users (Sprint 4) ---
+    # --- Quality distribution + avg score: scan brand users (Sprint 4) ---
     quality_distribution = {"0-25": 0, "25-50": 0, "50-75": 0, "75-100": 0}
+    avg_quality_score = None
     try:
         from db.redis.quality import get_conversation_quality
         q_uids = get_brand_active_users(brand_hash, offset=0, limit=500)
+        q_sum, q_count = 0, 0
         for q_uid in q_uids:
             qd = get_conversation_quality(q_uid)
             qs = qd.get("score")
             if qs is not None:
+                q_sum += qs
+                q_count += 1
                 if qs < 25:
                     quality_distribution["0-25"] += 1
                 elif qs < 50:
@@ -269,6 +274,8 @@ async def admin_analytics(days: int = 7, brand_hash: str = Depends(require_admin
                     quality_distribution["50-75"] += 1
                 else:
                     quality_distribution["75-100"] += 1
+        if q_count:
+            avg_quality_score = round(q_sum / q_count, 1)
     except Exception as e:
         logger.warning("quality distribution scan failed: %s", e)
 
@@ -278,6 +285,34 @@ async def admin_analytics(days: int = 7, brand_hash: str = Depends(require_admin
         error_summary = await pg.get_error_summary(brand_hash=brand_hash, days=days)
     except Exception as e:
         logger.warning("error summary failed: %s", e)
+
+    # --- Derived KPIs ---
+    conversion_rate = round((visits_booked / new_leads) * 100, 1) if new_leads else None
+
+    # --- Quality trend (7-day sparkline) ---
+    quality_trend = []
+    try:
+        quality_trend = get_quality_trend(brand_hash=brand_hash, days=7)
+    except Exception as e:
+        logger.warning("quality trend failed: %s", e)
+
+    # --- Cost spike detection: flag if today > 2× 7-day avg ---
+    cost_spike = None
+    try:
+        USD_TO_INR_SPIKE = 95
+        today_str = date.today().isoformat()
+        today_cost = get_daily_cost(day=today_str, brand_hash=brand_hash) or 0.0
+        past_costs = [
+            get_daily_cost(day=(date.today() - timedelta(days=i)).isoformat(), brand_hash=brand_hash) or 0.0
+            for i in range(1, 8)
+        ]
+        avg_7d = sum(past_costs) / 7
+        today_inr = round(today_cost * USD_TO_INR_SPIKE, 2)
+        avg_7d_inr = round(avg_7d * USD_TO_INR_SPIKE, 2)
+        if avg_7d > 0 and today_cost > avg_7d * 2:
+            cost_spike = {"today_inr": today_inr, "avg_7d_inr": avg_7d_inr}
+    except Exception as e:
+        logger.warning("cost spike check failed: %s", e)
 
     return {
         # KPI cards
@@ -301,6 +336,11 @@ async def admin_analytics(days: int = 7, brand_hash: str = Depends(require_admin
         # Quality + errors (Sprint 4)
         "quality_distribution": quality_distribution,
         "error_summary": error_summary,
+        # Analytics improvements
+        "avg_quality_score": avg_quality_score,
+        "conversion_rate": conversion_rate,
+        "quality_trend": quality_trend,
+        "cost_spike": cost_spike,
         # Extended data (kept for backward compat)
         "funnel": funnel_totals,
         "feedback": feedback,

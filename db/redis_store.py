@@ -134,6 +134,9 @@ from db.redis import (  # noqa: F401
     # Property outcome signals (Sprint 5)
     track_property_outcome,
     get_property_signals,
+    # Daily quality aggregate (trend sparkline + avg KPI)
+    track_daily_quality,
+    get_quality_trend,
     # Payment domain
     set_payment_info,
     get_payment_info,

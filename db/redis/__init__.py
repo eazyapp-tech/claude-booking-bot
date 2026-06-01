@@ -146,6 +146,9 @@ from db.redis.analytics import (  # noqa: F401
     set_response,
     get_response,
     FUNNEL_STAGES,
+    # Daily quality aggregate (trend sparkline + avg KPI)
+    track_daily_quality,
+    get_quality_trend,
 )
 
 # Payment domain

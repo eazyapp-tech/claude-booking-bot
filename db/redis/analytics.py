@@ -17,7 +17,7 @@ All tracking functions dual-write to global + brand-scoped keys.
 
 import json
 import time
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from db.redis._base import _r, ANALYTICS_TTL
@@ -521,3 +521,41 @@ def get_property_signals(property_id: str) -> dict[str, int]:
     if not raw:
         return {}
     return {k.decode(): int(v) for k, v in raw.items()}
+
+
+# ---------------------------------------------------------------------------
+# Daily quality aggregate (for trend + avg KPI in analytics dashboard)
+# Redis key: quality_daily:{day} / quality_daily:{brand_hash}:{day}
+# Fields: sum (int), count (int)
+# ---------------------------------------------------------------------------
+
+def track_daily_quality(brand_hash: str = None, score: int = 0, day: str = None) -> None:
+    """Accumulate a quality score into the daily aggregate. Dual-write global + brand-scoped."""
+    if day is None:
+        day = date.today().isoformat()
+    r = _r()
+    keys = [f"quality_daily:{day}"]
+    if brand_hash:
+        keys.append(f"quality_daily:{brand_hash}:{day}")
+    for key in keys:
+        r.hincrby(key, "sum", int(score))
+        r.hincrby(key, "count", 1)
+        r.expire(key, ANALYTICS_TTL)
+
+
+def get_quality_trend(brand_hash: str = None, days: int = 7) -> list[dict]:
+    """Return daily avg quality scores: [{"date": "2026-06-01", "avg": 72.5}, ...]"""
+    today = date.today()
+    r = _r()
+    result = []
+    for i in range(days - 1, -1, -1):
+        day = (today - timedelta(days=i)).isoformat()
+        key = f"quality_daily:{brand_hash}:{day}" if brand_hash else f"quality_daily:{day}"
+        raw = r.hgetall(key)
+        if raw:
+            s = int(raw.get(b"sum", raw.get("sum", 0)) or 0)
+            n = int(raw.get(b"count", raw.get("count", 1)) or 1)
+            result.append({"date": day, "avg": round(s / n, 1) if n else None})
+        else:
+            result.append({"date": day, "avg": None})
+    return result
