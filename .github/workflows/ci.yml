@@ -42,7 +42,8 @@ jobs:
             test_tool_boundary.py \
             test_wave_a.py \
             test_contract_alignment.py \
-            test_gender_filter.py; do
+            test_gender_filter.py \
+            test_shortlist_contract.py; do
             echo "::group::$t"
             python "$t"
             echo "::endgroup::"
