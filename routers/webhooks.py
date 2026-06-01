@@ -158,7 +158,8 @@ async def verify_whatsapp_webhook(request: Request):
     verify_token = settings.WHATSAPP_VERIFY_TOKEN if hasattr(settings, "WHATSAPP_VERIFY_TOKEN") else "booking-bot-verify"
 
     if mode == "subscribe" and token == verify_token:
-        return int(challenge) if challenge else ""
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(challenge)
 
     raise HTTPException(status_code=403, detail="Verification failed")
 
