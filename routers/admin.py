@@ -916,6 +916,8 @@ async def admin_list_properties(brand_hash: str = Depends(require_admin_brand_ke
     except Exception as e:
         logger.warning("admin_list_properties cache read: %s", e)
 
+    doc_counts = await pg.get_property_doc_counts(brand_pg_ids)
+
     # Always return all brand pg_ids; use cache for enrichment
     props = []
     for pid in brand_pg_ids:
@@ -924,6 +926,7 @@ async def admin_list_properties(brand_hash: str = Depends(require_admin_brand_ke
             "prop_id": pid,
             "name": info.get("pg_name") or info.get("name") or f"Property …{pid[-6:]}",
             "area": info.get("area") or info.get("location") or "",
+            "doc_count": doc_counts.get(pid, 0),
         })
     return {"properties": props}
 
@@ -932,7 +935,7 @@ def _require_property_ownership(prop_id: str, brand_hash: str) -> None:
     """Raise 403 if prop_id is not in the brand's pg_ids list."""
     brand_cfg = get_brand_config_by_hash(brand_hash) or {}
     brand_pg_ids = brand_cfg.get("pg_ids", [])
-    if brand_pg_ids and prop_id not in brand_pg_ids:
+    if prop_id not in brand_pg_ids:
         raise HTTPException(status_code=403, detail="Property not in your brand")
 
 
