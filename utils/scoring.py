@@ -69,6 +69,41 @@ def _fuzzy_amenity_match(user_amenities: set, prop_amenities: set) -> int:
     return matched
 
 
+def _gender_token(value: str) -> Optional[str]:
+    """Normalise a free-text gender string to 'male' | 'female' | 'any' | None.
+
+    Order matters: the female family is checked first so the 'male' ⊂ 'female'
+    and 'men' ⊂ 'women' substring traps never misfire. None = unknown/unspecified.
+    """
+    s = (value or "").strip().lower()
+    if not s:
+        return None
+    if "any" in s or "co-living" in s or "coliving" in s or "unisex" in s:
+        return "any"
+    if "girl" in s or "female" in s or "women" in s or "woman" in s or "ladies" in s:
+        return "female"
+    if "boy" in s or "male" in s or "men" in s or "man" in s or "gents" in s:
+        return "male"
+    return None
+
+
+def gender_compatible(pref_gender: str, prop_gender: str) -> bool:
+    """True if a property is physically bookable for the user's stated gender.
+
+    Gender is a HARD constraint (a renter cannot book an opposite-gender-only
+    PG), unlike amenities which stay soft/ranked. Permissive on 'Any'/co-living
+    and on unknown values either side, so we never over-filter the predominantly
+    'Any'-tagged inventory — only an explicit opposite-gender match is excluded.
+    """
+    pref = _gender_token(pref_gender)
+    prop = _gender_token(prop_gender)
+    if pref is None or prop is None:
+        return True
+    if pref == "any" or prop == "any":
+        return True
+    return pref == prop
+
+
 def match_score(
     property_data: dict,
     preferences: dict,
