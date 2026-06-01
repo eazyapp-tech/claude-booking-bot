@@ -7,12 +7,26 @@ description: "New user qualifying — ask bundled question to gather location, g
 
 <instructions>
 QUALIFY — FOR NEW USERS (no returning_user_context):
-- You need at minimum: a location (city alone is enough)
-- If user gives only area without city: ask for city — this is the ONLY required clarification before qualifying
-- Once you have a city (or city + area), DO NOT search immediately. Instead, ask ONE short bundled question that covers the 3 most impactful filters in a single natural message:
 
-  FORMAT:
-  "[City] has some great options! Quick —
+DEFAULT IS SEARCH-FIRST. A great broker shows options fast, then refines — never interrogates.
+The instant you can produce a useful result set, call save_preferences then search_properties in the
+SAME turn. You can produce one the moment you have a LOCATION plus ANY ONE more signal.
+
+SEARCH NOW — do NOT ask the qualifying question — when the user has given a city/area PLUS any one of:
+  → gender / available-for ("I'm a guy", "girls PG", "for boys")
+  → budget ("under 10k", "around 12000", "budget 8k")
+  → an amenity ("with WiFi", "need AC", "meals")
+  → a property type ("2BHK", "single room", "co-living", "hostel")
+  → a move-in date
+Budget, amenities and property type are RANKING signals; gender is a filter. NONE need to be complete
+before the first search — search with what you have and refine afterward. Showing 5 real options beats
+asking a fourth question every time.
+
+ASK THE BUNDLED QUESTION — EXACTLY ONE CASE:
+The user gave a BARE location (just a city, or just an area) and NOTHING else actionable — no gender,
+no budget, no amenity, no property type. Only then, ask ONE short bundled question (never multiple):
+
+  [City] has some great options! Quick —
   Is this for Boys, Girls, or Mixed?
   What's your monthly budget?
   Any must-haves from: WiFi · AC · Meals · Gym · Laundry · Housekeeping?
@@ -21,12 +35,12 @@ QUALIFY — FOR NEW USERS (no returning_user_context):
 
   Do NOT wrap any line in quotation marks — output the text exactly as shown above.
 
-SKIP qualifying and go directly to search if:
-  → Location + gender/available-for + budget are already provided in the conversation
-  → User explicitly says "just show me what's there" / "show all" / "no filter" / "anything"
-  → This is a follow-up turn where the user just answered a qualifying question
-  → User is asking for "show more" from an existing result set
-- IMPORTANT: ONE qualifying question only — never ask multiple separate questions one-by-one
+ONE clarification max, and only this one: if the user gave only an AREA with no city AND nothing else,
+ask for the city. Otherwise NEVER block — search.
+
+Also search immediately (skip the question) if the user says "just show me what's there" / "show all" /
+"no filter" / "anything", is asking for "show more" from an existing result set, or this is a follow-up
+turn where they just answered the qualifying question. NEVER re-ask once they have answered.
 </instructions>
 
 <example>
@@ -47,5 +61,15 @@ Any must-haves from: WiFi · AC · Meals · Gym · Laundry · Housekeeping?
 [call save_preferences(location="Koramangala, Bangalore", city="Bangalore", gender="All Boys", max_budget=12000, must_have_amenities="WiFi,Air Conditioning", amenities="WiFi,Air Conditioning")]
 [call search_properties(user_id=...)]
 [show results — skip qualifying since all info provided upfront]
+</assistant>
+</example>
+
+<example>
+<user_context>New user. Has location + budget + gender — enough to search. Do NOT ask for amenities first.</user_context>
+<user>Looking for a PG in Kurla, budget around 10k, I'm a guy</user>
+<assistant>
+[call save_preferences(location="Kurla, Mumbai", city="Mumbai", pg_available_for="All Boys", max_budget=10000, unit_types_available="ROOM")]
+[call search_properties(user_id=...)]
+[show results — searched immediately; amenities are refined after, never asked before the first search]
 </assistant>
 </example>

@@ -27,7 +27,7 @@ from db.redis_store import (
 )
 from utils.api import parse_amenities, parse_sharing_types
 from utils.geo import geocode_address
-from utils.scoring import match_score as calc_match_score
+from utils.scoring import match_score as calc_match_score, gender_compatible
 
 
 SEARCH_CACHE_TTL = 900  # 15 minutes
@@ -222,7 +222,6 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
     property_type = prefs.get("property_type")
     unit_types = prefs.get("unit_types_available")
     pg_available_for = prefs.get("pg_available_for")
-    sharing_types = prefs.get("sharing_types_enabled")
     radius = prefs.get("radius", 20000)
 
     if radius_flag:
@@ -254,14 +253,14 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
     }
     if min_budget:
         payload["rent_starts_from"] = min_budget
-    # NOTE: `unit_types_available` and `pg_available_for` are NOT sent to the search API.
-    # Ground truth (RentOk backend): both are free-text, per-property enums — pg_available_for
-    # is an exact IN-match on stored phrases (e.g. "Male & Female"), unit_types_available is an
-    # array-overlap on uppercase tokens (e.g. SINGLESHARING). Client-guessed values like
-    # "All Boys" / "double sharing" never match → silent 0 results. We instead return the full
-    # candidate set and let utils/scoring.py rank gender/unit-type as preferences post-search.
-    if sharing_types:
-        payload["sharing_type_enabled"] = sharing_types
+    # NOTE: `unit_types_available`, `pg_available_for` and `sharing_types_enabled` are NOT
+    # sent to the search API. Ground truth (RentOk backend): these are free-text, per-property
+    # enums — pg_available_for is an exact IN-match on stored phrases (e.g. "Male & Female"),
+    # unit_types_available is an array-overlap on uppercase tokens (e.g. SINGLESHARING).
+    # Client-guessed values like "All Boys" / "double sharing" never match → silent 0 results,
+    # and they over-exclude the predominantly "Any" co-living inventory. We instead return the
+    # full candidate set and rank/filter post-search (gender is hard-filtered below via
+    # gender_compatible; unit/sharing type rank via utils/scoring.py).
 
     logger.debug("search payload: %s", payload)
 
@@ -379,6 +378,31 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
     # Sort by custom score (descending) to surface best matches first
     properties.sort(key=lambda p: p.get("_custom_score", 0), reverse=True)
 
+    # Gender is a HARD constraint — a renter physically cannot book an
+    # opposite-gender-only PG. Unlike amenities (soft, ranked above), exclude
+    # incompatible inventory rather than surfacing unbookable options ranked a
+    # few points lower. "Any"/co-living and unknown values stay (gender_compatible
+    # is permissive), so the predominantly "Any"-tagged stock is never over-filtered.
+    if pg_available_for:
+        compatible = [p for p in properties
+                      if gender_compatible(pg_available_for, p.get("p_pg_available_for", ""))]
+        removed = len(properties) - len(compatible)
+        if compatible:
+            if removed:
+                logger.info("gender filter removed %d incompatible properties (pref=%s)",
+                            removed, pg_available_for)
+            properties = compatible
+        elif removed:
+            # Every candidate is opposite-gender → be honest instead of padding
+            # the list with options the user cannot actually book.
+            logger.info("gender filter removed ALL %d properties (pref=%s)",
+                        removed, pg_available_for)
+            return (
+                f"I couldn't find any properties matching your requirement "
+                f"({pg_available_for}) in this area — the available options here "
+                f"are for a different gender. Want me to widen the search or try a nearby area?"
+            )
+
     existing_map = get_property_info_map(user_id)
     # Build index for fast dedup by prop_id → position in existing_map
     _existing_idx = {}
@@ -412,7 +436,10 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
         long_val = (p.get("p_longitude") or p.get("p_long") or p.get("p_pg_longitude")
                     or p.get("longitude") or p.get("long") or p.get("lng")
                     or p.get("_geocoded_lng") or "")
-        phone = p.get("p_phone_number", "")
+        # Property contact lives in p_personal_contact; p_phone_number is usually
+        # absent. The shortlist API requires a non-empty property_contact, so prefer
+        # the populated field. Server-side only — never rendered to users.
+        phone = p.get("p_personal_contact") or p.get("p_phone_number") or ""
         min_token = p.get("p_min_token_amount", 1000)
         microsite_url = p.get("p_microsite_url", p.get("microsite_url", ""))
         match_score = p.get("_custom_score", p.get("p_match_score", p.get("match_score", "")))

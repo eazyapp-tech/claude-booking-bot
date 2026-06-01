@@ -49,8 +49,11 @@ async def shortlist_property(user_id: str, property_name: str, **kwargs) -> str:
     except Exception as e:
         return f"Error shortlisting property: {str(e)}"
 
-    # Bug fix: API can return HTTP 200 with success:false — treat as failure.
-    if not data.get("success"):
+    # This endpoint signals success via inner status==200 (HTTP is always 200) and
+    # carries NO `success` key — verified live. Accept either convention defensively
+    # so a genuine 200 is never mis-reported as a failure.
+    ok = data.get("success") is True or data.get("status") in (200, "200")
+    if not ok:
         msg = data.get("message", "unknown error")
         return f"Could not shortlist '{property_name}': {msg}. Please try again."
 
