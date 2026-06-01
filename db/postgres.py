@@ -100,15 +100,16 @@ async def get_message_volume(start_date: str, end_date: str, brand_hash: Optiona
     if _pool is None:
         return {}
     try:
-        start = date.fromisoformat(start_date)
-        end = date.fromisoformat(end_date)
+        from datetime import timedelta
+        start = datetime.fromisoformat(start_date)
+        end = datetime.fromisoformat(end_date) + timedelta(days=1)
         if brand_hash:
             rows = await _pool.fetch(
                 """
                 SELECT DATE(created_at) AS day, COUNT(*) AS cnt
                 FROM booking_messages
                 WHERE created_at >= $1
-                  AND created_at < ($2 + INTERVAL '1 day')
+                  AND created_at < $2
                   AND brand_hash = $3
                 GROUP BY DATE(created_at)
                 ORDER BY day
@@ -123,7 +124,7 @@ async def get_message_volume(start_date: str, end_date: str, brand_hash: Optiona
                 SELECT DATE(created_at) AS day, COUNT(*) AS cnt
                 FROM booking_messages
                 WHERE created_at >= $1
-                  AND created_at < ($2 + INTERVAL '1 day')
+                  AND created_at < $2
                 GROUP BY DATE(created_at)
                 ORDER BY day
                 """,
