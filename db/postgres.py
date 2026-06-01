@@ -134,6 +134,36 @@ async def get_message_volume(start_date: str, end_date: str, brand_hash: Optiona
         return {}
 
 
+async def create_booking_messages_table() -> None:
+    """Create booking_messages table if it doesn't exist (called on startup)."""
+    if _pool is None:
+        return
+    try:
+        await _pool.execute("""
+            CREATE TABLE IF NOT EXISTS booking_messages (
+                id               SERIAL PRIMARY KEY,
+                thread_id        VARCHAR(255) NOT NULL,
+                user_phone       VARCHAR(50),
+                message_text     TEXT,
+                message_sent_by  INT,
+                created_at       TIMESTAMP    DEFAULT NOW(),
+                updated_at       TIMESTAMP    DEFAULT NOW(),
+                platform_type    VARCHAR(50),
+                is_template      BOOLEAN      DEFAULT FALSE,
+                pg_ids           TEXT,
+                brand_hash       VARCHAR(16)
+            );
+            CREATE INDEX IF NOT EXISTS idx_booking_messages_thread_id
+                ON booking_messages(thread_id);
+            CREATE INDEX IF NOT EXISTS idx_booking_messages_brand_hash
+                ON booking_messages(brand_hash);
+            CREATE INDEX IF NOT EXISTS idx_booking_messages_created_at
+                ON booking_messages(created_at);
+        """)
+    except Exception as e:
+        logger.warning("create_booking_messages_table: %s", e)
+
+
 async def add_brand_hash_columns() -> None:
     """Add brand_hash column to booking_messages and leads tables (idempotent migration)."""
     if _pool is None:
@@ -392,18 +422,41 @@ async def enable_pgvector() -> None:
     global _pgvector_available
     if _pool is None:
         return
+    # category column has no pgvector dependency — always add it
+    try:
+        await _pool.execute(
+            "ALTER TABLE property_documents ADD COLUMN IF NOT EXISTS category VARCHAR(30);"
+        )
+    except Exception as e:
+        logger.warning("category column migration: %s", e)
+    # embedding column requires the pgvector extension
     try:
         await _pool.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        await _pool.execute("""
-            ALTER TABLE property_documents
-                ADD COLUMN IF NOT EXISTS category VARCHAR(30),
-                ADD COLUMN IF NOT EXISTS embedding vector(256);
-        """)
+        await _pool.execute(
+            "ALTER TABLE property_documents ADD COLUMN IF NOT EXISTS embedding vector(256);"
+        )
         _pgvector_available = True
-        logger.info("pgvector enabled, embedding columns ready")
+        logger.info("pgvector enabled, embedding column ready")
     except Exception as e:
         logger.warning("pgvector setup skipped (non-critical): %s", e)
         _pgvector_available = False
+
+
+async def get_property_doc_counts(property_ids: list[str]) -> dict[str, int]:
+    """Return {property_id: doc_count} for the given ids. Missing ids default to 0."""
+    if _pool is None or not property_ids:
+        return {}
+    try:
+        rows = await _pool.fetch(
+            "SELECT property_id, COUNT(*)::int AS cnt"
+            " FROM property_documents WHERE property_id = ANY($1::text[])"
+            " GROUP BY property_id",
+            property_ids,
+        )
+        return {r["property_id"]: r["cnt"] for r in rows}
+    except Exception as e:
+        logger.warning("get_property_doc_counts: %s", e)
+        return {}
 
 
 async def update_document_embedding(doc_id: int, embedding: list[float]) -> None:
