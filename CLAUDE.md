@@ -28,7 +28,7 @@ Two-channel chatbot: **WhatsApp** (webhook at `/whatsapp`, Meta/Interakt APIs) a
 ### Entry Points
 ```
 main.py              (129)  — FastAPI app factory | lifespan: init pools, create tables, add_brand_hash_columns migration, init_registry, auto-seed brand configs (_SEED_BRANDS)
-config.py            (65)   — Pydantic settings | Settings@5 (models, rate limits, feature flags: KYC_ENABLED, PAYMENT_REQUIRED, DYNAMIC_SKILLS_ENABLED, SEMANTIC_KB_ENABLED, NOMIC_API_KEY; Wave 3 tool-boundary: TOOL_TIMEOUT_SECONDS=30.0, IDEMPOTENCY_WINDOW_SECONDS=90)
+config.py            (65)   — Pydantic settings | Settings@5 (models, rate limits, feature flags: KYC_ENABLED, PAYMENT_REQUIRED, DYNAMIC_SKILLS_ENABLED, SEMANTIC_KB_ENABLED, NOMIC_API_KEY; Wave 3 tool-boundary: TOOL_TIMEOUT_SECONDS=30.0, IDEMPOTENCY_WINDOW_SECONDS=90; TOP-1PCT 3 reconciliation: RECONCILE_ENABLED=true, RECONCILE_VISIT_ENABLED=false, RECONCILE_GRACE_MINUTES=30, RECONCILE_MAX_ATTEMPTS=4, RECONCILE_BATCH_SIZE=200)
 core/state.py        (16)   — Shared singletons | engine, conversation (set by lifespan, imported as `import core.state as state` everywhere)
 core/auth.py         (53)   — Auth helpers | verify_api_key (legacy), require_brand_api_key (brand CRUD), require_admin_brand_key (admin endpoints — validates brand config exists, returns brand_hash), CHAT_BASE_URL
 core/tenancy.py      (40)   — Server-authoritative web-channel tenant trust boundary | resolve_web_brand@22 — derives (brand_hash, pg_ids, safe_account_values) from the verified link token ONLY (or DEFAULT_BRAND_API_KEY when tokenless); client-supplied brand_hash/pg_ids are NEVER trusted. Called by routers/chat.py:_apply_web_brand. The web channel's single source of brand identity.
@@ -42,7 +42,7 @@ core/pipeline.py     (152)  — Shared pipeline | run_pipeline@32 (chat + WhatsA
 routers/__init__.py  (1)    — Package init
 routers/public.py    (35)   — GET /health, GET /brand-config (no auth required)
 routers/chat.py      (320+) — POST /chat, POST /chat/stream, POST /chat/stop (server-authoritative interrupt — sets Phase-C cancel flag; /chat/stream clears any stale flag at start), POST /feedback, GET /feedback/stats, GET /funnel, POST /language
-routers/webhooks.py  (400+) — GET /webhook/whatsapp (Meta verification), POST /webhook/whatsapp (HMAC via verify_whatsapp_signature), POST /webhook/payment (HMAC via verify_payment_signature), POST /cron/follow-ups (verify_api_key); _drain_and_process() async drain task (Phase B+C)
+routers/webhooks.py  (400+) — GET /webhook/whatsapp (Meta verification), POST /webhook/whatsapp (HMAC via verify_whatsapp_signature), POST /webhook/payment (HMAC via verify_payment_signature), POST /cron/follow-ups + POST /cron/reconcile (verify_api_key); _drain_and_process() async drain task (Phase B+C)
 routers/admin.py     (750+) — GET /rate-limit/status; all /admin/* routes (analytics, conversations, takeover/resume/message, command-center, leads, flags, brand-config, broadcast, properties/documents, backfill-brands). ALL admin endpoints use require_admin_brand_key for brand isolation.
 ```
 
@@ -61,6 +61,7 @@ core/router.py       (135)  — Keyword safety net (3-phase) | apply_keyword_saf
 core/followup.py     (335)  — Multi-step post-visit follow-up state machine | create_followup_state@47, get_followup_state@87, classify_reply@106, has_active_followup@135, handle_followup_reply@141, advance_followup@225, get_due_state_followups@283
 core/attention.py    (110)  — Needs-attention flag computation | compute_attention_flags@35, save_attention_flags@94, get_attention_flags@99, update_attention_flags@108. Triggered from pipeline.py after assistant response save.
 db/redis/quality.py  (167)  — Conversation quality scoring (0-100) | compute_conversation_quality@30, save_conversation_quality@142, get_conversation_quality@147, update_conversation_quality@158. Triggered from pipeline.py alongside attention flags.
+core/reconcile.py    (117)  — TOP-1PCT 3 silent-success verifier | verify_claim@? (dispatch: reserve→checkPropetyReserved, visit→gated/stub), run_reconcile_batch@? (pure injectable loop → {checked,verified,missing,retry_pending,read_errors,skipped}). 4-way verify contract: True=found→verified, False=absent→bump attempts, None=skip no-bump, raises=read-error no-bump. Called by POST /cron/reconcile.
 core/log.py          (42)   — Logging setup | get_logger@39
 core/ui_parts.py     (865)  — Backend-controlled Generative UI parts | generate_ui_parts@618 (quick_replies, action_buttons, expandable_sections from tool results + context), _generate_expandable_sections@515
 ```
@@ -186,9 +187,10 @@ test_wave_a.py           (377) — Wave A "stop lying" product-honesty regressio
 test_contract_alignment.py (265) — RentOk API contract-alignment regression | 31 deterministic assertions (in-memory fake Redis, stubbed httpx/http_post, no network/LLM): [1] room_details — _ROOM_DETAILS_URL is POST get-room-details, _extract_rooms pulls data.data.rooms + degrades to [] safely, schema drops live-bed claims + steers to a visit, fetch_room_details POSTs {eazypg_id} (never GET) + renders name/sharing/rent without inventing bed counts + degrades gracefully on empty; [2] lead_source — _create_external_lead stamps "bookingBot00" → /tenant/addLeadFromEazyPGID (live) + source-level assert payment.py/schedule_visit.py dropped old "Booking Bot"; [3] search — payload omits pg_available_for + unit_types_available across all relaxation rounds, keeps pg_ids. Run: `python test_contract_alignment.py` (exit 0 = pass). Results: 31/31 PASS
 test_gender_filter.py    (218) — Search relevance: gender is a HARD constraint | 30 deterministic assertions (in-memory fake Redis, all search side-effects stubbed, no network/LLM): [1] pure `gender_compatible(pref, prop)` predicate incl. substring traps (male⊂female, men⊂women checked female-first), permissive on Any/co-living + unknown either side; [2] boys seeker → girls-only "Jyoti Sparkle" EXCLUDED post-score, boys + Any kept; [3] no gender pref → nothing filtered; [4] area has only opposite-gender stock → honest "different gender" empty state, never padded with unbookable inventory; [5] payload omits BOTH `sharing_type_enabled` (singular, dead key removed) and `sharing_types_enabled` (plural), keeps pg_ids. Gender is hard-filtered in search.py AFTER scoring; amenities stay SOFT (ranked, not excluded). Run: `python test_gender_filter.py` (exit 0 = pass). Results: 30/30 PASS
 test_shortlist_contract.py (271) — Shortlist contract regression (S17 drop-off) | 16 deterministic assertions (in-memory fake Redis + httpx, no network/LLM): [1] shortlist.py success check — POST /bookingBot/shortlist-booking-bot-property signals via INNER `status` (HTTP always 200) with NO top-level `success` key, so `{"status":200,"message":"...successfully"}` MUST return "shortlisted successfully" (the regression), `{"status":"200"}` string + legacy `{"success":true}` also succeed, `{"status":400,"...required"}` / `{"success":false}` / transport error → honest "Could not shortlist" (never faked success); verifies cached `property_contact`+`property_id` are forwarded to the API; [2] search.py contact caching — `set_property_info_map` caches `phone_number` from `p_personal_contact` (the populated field), falls back to `p_phone_number`, '' when neither present (no crash). Both bugs were each-fatal for anonymous web users, proven live. Run: `python test_shortlist_contract.py` (exit 0 = pass). Results: 16/16 PASS
+test_reconciliation.py   (300+) — TOP-1PCT 3 silent-success ledger regression | 29 deterministic assertions (in-memory FakeStore mirroring postgres helpers, no network/LLM): [1] run_reconcile_batch loop outcomes — True→verified+resolved, False→attempts bumped (only 'missing' at RECONCILE_MAX_ATTEMPTS), None→pending no-bump, raises→pending no-bump (read error never fabricates 'missing'); [2] multi-run sustained absence — a claim only flips 'missing' after MAX_ATTEMPTS separate polls, never one; [3] ledger semantics — grace-window excludes too-young claims, cancelled claims excluded, count_missing_claims is brand-scoped (no cross-brand bleed); [4] verifier dispatch — reserve→checkPropetyReserved, visit→None when RECONCILE_VISIT_ENABLED off (NotImplementedError stub never reached), unknown event→None. Run: `python test_reconciliation.py` (exit 0 = pass). Results: 29/29 PASS
 ```
 
-**CI security gate** (`.github/workflows/ci.yml`): hermetic suite — `test_untrusted_content.py`, `test_tenant_isolation.py`, `test_webhook_signature.py`, `test_cost_accounting.py`, `test_server_stop.py`, `test_engine_contract.py`, `test_tool_boundary.py`, `test_wave_a.py`, `test_contract_alignment.py`, `test_gender_filter.py`, `test_shortlist_contract.py` (11 tests, no network/Redis/LLM). Reusable workflow (`pull_request` + `workflow_call`). On PRs it is the required status check (configure branch protection to block merge on failure). `deploy-render.yml`'s `deploy` job `needs: security-tests` (calls `ci.yml` via `workflow_call`) so a red suite blocks the Render deploy — the suite runs once per commit, not twice.
+**CI security gate** (`.github/workflows/ci.yml`): hermetic suite — `test_untrusted_content.py`, `test_tenant_isolation.py`, `test_webhook_signature.py`, `test_cost_accounting.py`, `test_server_stop.py`, `test_engine_contract.py`, `test_tool_boundary.py`, `test_wave_a.py`, `test_contract_alignment.py`, `test_gender_filter.py`, `test_shortlist_contract.py`, `test_admin_login.py`, `test_quality_analytics.py`, `test_reconciliation.py` (14 tests, no network/Redis/LLM). Reusable workflow (`pull_request` + `workflow_call`). On PRs it is the required status check (configure branch protection to block merge on failure). `deploy-render.yml`'s `deploy` job `needs: security-tests` (calls `ci.yml` via `workflow_call`) so a red suite blocks the Render deploy — the suite runs once per commit, not twice.
 
 ## Frontend File Map (eazypg-chat/)
 
@@ -380,6 +382,16 @@ error_events         — id, user_id, brand_hash, error_type, error_source, erro
                      Created on startup via pg.create_error_events_table()
                      Types: tool_failure | api_timeout | empty_response | routing_override
                      90-day retention via cleanup_old_error_events()
+
+reconciliation_claims — id, uid, phone, property_id, event, brand_hash, status, attempts, claimed_at, last_checked_at, resolved_at
+                     TOP-1PCT 3 — silent-success ledger. Created on startup via pg.create_reconciliation_claims_table()
+                     event: reserve | visit. status: pending | verified | missing | cancelled (default pending)
+                     Write seams (fire-and-forget, never affect a booking): insert_claim@810 at reserve_bed + save_visit_time success;
+                       mark_claims_cancelled@879 at cancel_booking success. Helpers: get_pending_claims@836, mark_claim@858, count_missing_claims@897.
+                     Hourly cron POST /cron/reconcile re-polls RentOk per pending claim; 'missing' = sustained absence across RECONCILE_MAX_ATTEMPTS polls.
+                     Reserve verifier reuses checkPropetyReserved (proven). Visit verifier dormant (NotImplementedError stub, gated by RECONCILE_VISIT_ENABLED).
+                     Indexes: idx_recon_status (status, claimed_at), idx_recon_lookup (uid, property_id, event, status).
+                     Spec: docs/superpowers/specs/2026-06-02-reconciliation-design.md. Verifier loop: core/reconcile.py. Admin tile: GET /admin/command-center → reconciliation.missing.
 ```
 
 ### New Backend Endpoints (main.py)
@@ -390,7 +402,8 @@ GET  /admin/conversations/{uid}                — full thread + memory + cost +
 POST /admin/conversations/{uid}/takeover       — activate human mode (brand-scoped)
 POST /admin/conversations/{uid}/resume         — deactivate human mode (brand-scoped)
 POST /admin/conversations/{uid}/message        — send admin message via WhatsApp + auto-resume AI
-GET  /admin/command-center                     — today's KPIs (brand-scoped: messages, leads, visits, funnel, costs)
+GET  /admin/command-center                     — today's KPIs (brand-scoped: messages, leads, visits, funnel, costs) + reconciliation.missing tile
+POST /cron/reconcile                           — TOP-1PCT 3 hourly silent-success check (verify_api_key); re-polls RentOk per pending claim, marks verified/missing
 GET  /admin/leads                              — filterable lead list (brand-scoped)
 GET  /admin/analytics                          — analytics dashboard data (brand-scoped: funnel, agents, skills, costs, feedback)
 GET  /admin/flags                              — effective feature flags for brand (global defaults + brand overrides)
@@ -418,6 +431,7 @@ GET  /brand-config?token={uuid}                       — PUBLIC, no auth — re
 - **Rentok API**: `https://apiv2.rentok.com` (set via `RENTOK_API_BASE_URL`)
 - **Models**: Broker=Haiku (`claude-haiku-4-5-20251001`), Others=Sonnet (`claude-sonnet-4-6`)
 - **Feature flags**: `KYC_ENABLED=false`, `PAYMENT_REQUIRED=false`, `DYNAMIC_SKILLS_ENABLED=true`, `SEMANTIC_KB_ENABLED=false` — global defaults, overridable per-brand via admin panel (stored in `brand_flags:{brand_hash}`)
+- **Reconciliation flags** (TOP-1PCT 3, not per-brand): `RECONCILE_ENABLED=true` (kill-switch), `RECONCILE_VISIT_ENABLED=false` (visit verifier contract unproven — keep off until probe-verified), `RECONCILE_GRACE_MINUTES=30`, `RECONCILE_MAX_ATTEMPTS=4`, `RECONCILE_BATCH_SIZE=200`. Deployment: register a Render Cron (hourly) hitting `POST /cron/reconcile` with `X-API-Key`.
 - **Rate limits**: 6/min per user, 30/hr per user, 100/min global
 - **New env vars**: `OSRM_API_KEY` (OSRM routing), `TAVILY_API_KEY` (optional, web search), `WEB_SEARCH_MAX_PER_CONVERSATION=3`, `NOMIC_API_KEY` (Nomic Atlas — semantic KB embeddings, optional)
 - **Webhook signing secrets (optional, activate HMAC enforcement)**: `WHATSAPP_APP_SECRET` (Meta app secret → enforces X-Hub-Signature-256 on POST /webhook/whatsapp), `PAYMENT_WEBHOOK_SECRET` (→ enforces X-Webhook-Signature on POST /webhook/payment). When unset, both webhooks fall back to legacy X-API-Key auth.

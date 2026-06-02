@@ -67,4 +67,14 @@ async def cancel_booking(user_id: str, property_name: str, **kwargs) -> str:
     except Exception:
         pass
 
+    # Reconciliation: close the loop so a legitimately-cancelled booking is never
+    # surfaced as a false "missing" by the cron. Fire-and-forget — worst case is
+    # one false 'missing' for manual review, never a broken cancellation.
+    if settings.RECONCILE_ENABLED:
+        try:
+            from db import postgres as pg
+            await pg.mark_claims_cancelled(user_id, property_id)
+        except Exception:
+            logger.warning("recon mark_claims_cancelled failed", exc_info=True)
+
     return f"Booking cancelled successfully for '{prop.get('property_name', property_name)}'."

@@ -98,6 +98,15 @@ class Settings(BaseSettings):
     TOOL_TIMEOUT_SECONDS: float = 30.0    # per-tool execution ceiling (asyncio.wait_for)
     IDEMPOTENCY_WINDOW_SECONDS: int = 90  # burst-dedup window for write-path tools
 
+    # Reconciliation safety check (TOP-1PCT Initiative 3) — detect "silent success"
+    # (bot told the user a booking/reserve landed but no record exists in RentOk).
+    # All write seams are fire-and-forget wrapped; this is additive observability only.
+    RECONCILE_ENABLED: bool = True          # global kill-switch (write seam still records cheaply; cron no-ops when off)
+    RECONCILE_VISIT_ENABLED: bool = False   # gate visit verification — getBookingPreferences contract must be probe-verified first
+    RECONCILE_GRACE_MINUTES: int = 30       # min claim age before first verify (RentOk reads are eventually consistent)
+    RECONCILE_MAX_ATTEMPTS: int = 4         # hourly polls of sustained absence before a claim is marked 'missing'
+    RECONCILE_BATCH_SIZE: int = 200         # max claims processed per cron run
+
     # Conversation summarization
     SUMMARIZE_THRESHOLD: int = 30       # trigger summarization at this message count
     SUMMARIZE_KEEP_RECENT: int = 10     # keep this many recent messages verbatim

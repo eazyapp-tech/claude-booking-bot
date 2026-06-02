@@ -457,6 +457,32 @@ async def process_followups():
     }
 
 
+@router.post("/cron/reconcile", dependencies=[Depends(verify_api_key)])
+async def run_reconcile():
+    """Reconciliation safety check (TOP-1PCT 3). Call hourly via Render Cron.
+
+    Re-polls RentOk for each pending booking/reserve claim past the grace window
+    and marks it verified / missing. "missing" = sustained absence across
+    RECONCILE_MAX_ATTEMPTS separate hourly runs — never a single check. A read
+    error never penalizes a claim (stays pending). Read-only against RentOk;
+    cannot mutate any booking.
+    """
+    if not settings.RECONCILE_ENABLED:
+        return {"status": "disabled"}
+
+    from datetime import datetime, timedelta, timezone
+    from core.reconcile import run_reconcile_batch, verify_claim
+
+    grace_cutoff = datetime.now(timezone.utc) - timedelta(minutes=settings.RECONCILE_GRACE_MINUTES)
+    claims = await pg.get_pending_claims(grace_cutoff, limit=settings.RECONCILE_BATCH_SIZE)
+    stats = await run_reconcile_batch(
+        claims, verify_claim, pg.mark_claim, settings.RECONCILE_MAX_ATTEMPTS,
+    )
+    if stats.get("missing"):
+        logger.error("reconcile: %d claim(s) marked MISSING (silent-success breach)", stats["missing"])
+    return {"status": "ok", **stats}
+
+
 async def _deliver_followup(user_id: str, message: str) -> bool:
     """Deliver a follow-up message via the best available channel.
 

@@ -769,3 +769,146 @@ async def get_messages(thread_id: str, limit: int = 50) -> list[dict]:
     except Exception as e:
         logger.error("get_messages error: %s", e)
         return []
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Reconciliation claim ledger (TOP-1PCT Initiative 3) — detect "silent success":
+# the bot told a user a booking/reserve landed but no record exists in RentOk.
+# Durable audit record (Postgres, not Redis). All write seams are fire-and-forget
+# wrapped by their callers — a ledger failure can NEVER break a booking.
+# Spec: docs/superpowers/specs/2026-06-02-reconciliation-design.md §5.
+# ──────────────────────────────────────────────────────────────────────────
+
+async def create_reconciliation_claims_table() -> None:
+    """Create reconciliation_claims table (idempotent, called on startup)."""
+    if _pool is None:
+        return
+    try:
+        await _pool.execute("""
+            CREATE TABLE IF NOT EXISTS reconciliation_claims (
+                id              BIGSERIAL PRIMARY KEY,
+                uid             TEXT NOT NULL,
+                phone           TEXT,
+                property_id     TEXT NOT NULL,
+                event           TEXT NOT NULL,
+                brand_hash      TEXT,
+                status          TEXT NOT NULL DEFAULT 'pending',
+                attempts        INT  NOT NULL DEFAULT 0,
+                claimed_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_checked_at TIMESTAMPTZ,
+                resolved_at     TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS idx_recon_status
+                ON reconciliation_claims (status, claimed_at);
+            CREATE INDEX IF NOT EXISTS idx_recon_lookup
+                ON reconciliation_claims (uid, property_id, event, status);
+        """)
+    except Exception as e:
+        logger.warning("create_reconciliation_claims_table: %s", e)
+
+
+async def insert_claim(
+    uid: str,
+    phone: Optional[str],
+    property_id: str,
+    event: str,
+    brand_hash: Optional[str] = None,
+) -> None:
+    """Record one confirmed-success claim. event = 'reserve' | 'visit'.
+
+    Callers MUST wrap this in try/except — but it is also internally guarded so a
+    DB outage degrades to a logged no-op rather than raising into the booking path.
+    """
+    if _pool is None:
+        return
+    try:
+        await _pool.execute(
+            """
+            INSERT INTO reconciliation_claims (uid, phone, property_id, event, brand_hash)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            uid, phone, property_id, event, brand_hash,
+        )
+    except Exception as e:
+        logger.warning("insert_claim error (claim dropped, booking unaffected): %s", e)
+
+
+async def get_pending_claims(grace_cutoff: datetime, limit: int = 200) -> list[dict]:
+    """Pending claims old enough to verify (claimed_at < grace_cutoff), oldest first."""
+    if _pool is None:
+        return []
+    try:
+        rows = await _pool.fetch(
+            """
+            SELECT id, uid, phone, property_id, event, brand_hash, attempts
+            FROM reconciliation_claims
+            WHERE status = 'pending' AND claimed_at < $1
+            ORDER BY claimed_at ASC
+            LIMIT $2
+            """,
+            grace_cutoff,
+            limit,
+        )
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error("get_pending_claims error: %s", e)
+        return []
+
+
+async def mark_claim(claim_id: int, status: str, attempts: int) -> None:
+    """Update a claim's status/attempts. Sets resolved_at for terminal states."""
+    if _pool is None:
+        return
+    try:
+        resolved = status in ("verified", "missing", "cancelled")
+        await _pool.execute(
+            """
+            UPDATE reconciliation_claims
+            SET status = $2,
+                attempts = $3,
+                last_checked_at = NOW(),
+                resolved_at = CASE WHEN $4 THEN NOW() ELSE resolved_at END
+            WHERE id = $1
+            """,
+            claim_id, status, attempts, resolved,
+        )
+    except Exception as e:
+        logger.error("mark_claim error (id=%s): %s", claim_id, e)
+
+
+async def mark_claims_cancelled(uid: str, property_id: str) -> None:
+    """Close the loop when a user cancels: pending claims → 'cancelled' so a
+    legitimately-cancelled booking is never surfaced as a false 'missing'."""
+    if _pool is None:
+        return
+    try:
+        await _pool.execute(
+            """
+            UPDATE reconciliation_claims
+            SET status = 'cancelled', resolved_at = NOW()
+            WHERE uid = $1 AND property_id = $2 AND status = 'pending'
+            """,
+            uid, property_id,
+        )
+    except Exception as e:
+        logger.warning("mark_claims_cancelled error: %s", e)
+
+
+async def count_missing_claims(brand_hash: Optional[str] = None) -> int:
+    """Count of unresolved breaches for the admin tile (brand-scoped when given)."""
+    if _pool is None:
+        return 0
+    try:
+        if brand_hash:
+            row = await _pool.fetchrow(
+                "SELECT COUNT(*) AS n FROM reconciliation_claims WHERE status = 'missing' AND brand_hash = $1",
+                brand_hash,
+            )
+        else:
+            row = await _pool.fetchrow(
+                "SELECT COUNT(*) AS n FROM reconciliation_claims WHERE status = 'missing'"
+            )
+        return int(row["n"]) if row else 0
+    except Exception as e:
+        logger.error("count_missing_claims error: %s", e)
+        return 0

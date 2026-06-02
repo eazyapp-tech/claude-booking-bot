@@ -562,6 +562,15 @@ async def admin_command_center(brand_hash: str = Depends(require_admin_brand_key
     except Exception:
         pass
 
+    # Reconciliation health (best-effort): claims the hourly cron marked 'missing'
+    # — bot told a user a booking/reserve landed but no record exists in RentOk.
+    # Non-zero = silent-success breach needing manual review. Brand-scoped.
+    missing_claims = 0
+    try:
+        missing_claims = await pg.count_missing_claims(brand_hash)
+    except Exception:
+        pass
+
     return {
         "today": {
             "messages":         msg_count,
@@ -569,6 +578,7 @@ async def admin_command_center(brand_hash: str = Depends(require_admin_brand_key
             "visits_scheduled": day_funnel.get("visit", 0),
             "booked":           day_funnel.get("booking", 0),
         },
+        "reconciliation":       {"missing": missing_claims},
         "funnel":               day_funnel,
         "agents":               day_agents,
         "active_conversations": get_brand_active_users_count(brand_hash),
