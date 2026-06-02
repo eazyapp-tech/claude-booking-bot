@@ -58,15 +58,15 @@ async def check_reserve_bed(user_id: str, property_name: str, **kwargs) -> str:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
-                f"{settings.RENTOK_API_BASE_URL}/bookingBot/reserveProperty",
-                json={"user_id": user_id, "property_id": property_id, "check_only": True},
+                f"{settings.RENTOK_API_BASE_URL}/bookingBot/checkPropetyReserved",
+                json={"user_id": user_id, "property_id": property_id},
             )
             resp.raise_for_status()
             data = resp.json()
     except Exception as e:
         return user_error("check the reservation status", e, logger=logger)
 
-    if data.get("success") or data.get("reserved"):
+    if data.get("data") is True:
         return f"A bed is already reserved for you at '{prop.get('property_name', property_name)}'."
     return f"No bed reserved yet at '{prop.get('property_name', property_name)}'. You can proceed with reservation."
 
