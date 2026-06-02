@@ -186,6 +186,7 @@ from db.redis.admin import (  # noqa: F401
     get_user_brand,
     add_to_brand_active_users,
     get_brand_active_users,
+    get_brand_active_users_scored,
     get_brand_active_users_count,
     # Human mode
     get_human_mode,
@@ -193,6 +194,9 @@ from db.redis.admin import (  # noqa: F401
     clear_human_mode,
     increment_session_cost,
     get_session_cost,
+    # Admin "seen" tracking (Phase 5)
+    mark_admin_seen,
+    get_admin_seen_map,
 )
 
 # Quality domain (Sprint 4)

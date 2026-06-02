@@ -137,6 +137,32 @@ async def get_message_volume(start_date: str, end_date: str, brand_hash: Optiona
         return {}
 
 
+async def get_last_inbound_at(thread_id: str) -> Optional[datetime]:
+    """Most recent INBOUND WhatsApp message time for a thread (naive UTC).
+
+    Drives the 24h WhatsApp customer-service window: Meta only allows free-form
+    text within 24h of the user's last inbound message. Returns None if the user
+    has never sent an inbound WhatsApp message (or DB is unavailable).
+    """
+    if _pool is None:
+        return None
+    try:
+        row = await _pool.fetchrow(
+            """
+            SELECT MAX(created_at) AS last_inbound
+            FROM booking_messages
+            WHERE thread_id = $1
+              AND message_sent_by = 1
+              AND platform_type = 'whatsapp'
+            """,
+            thread_id,
+        )
+        return row["last_inbound"] if row else None
+    except Exception as e:
+        logger.error("get_last_inbound_at error: %s", e)
+        return None
+
+
 async def create_booking_messages_table() -> None:
     """Create booking_messages table if it doesn't exist (called on startup)."""
     if _pool is None:

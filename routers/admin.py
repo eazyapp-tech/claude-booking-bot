@@ -48,16 +48,19 @@ from db.redis_store import (
     get_active_users,
     get_agent_usage,
     get_brand_active_users,
+    get_brand_active_users_scored,
     get_brand_active_users_count,
     get_brand_config,
     get_brand_config_by_hash,
     get_conversation,
     get_feedback_counts,
     get_funnel,
+    get_admin_seen_map,
     get_human_mode,
     get_last_agent,
     get_preferences,
     get_session_cost,
+    mark_admin_seen,
     get_skill_misses,
     get_skill_usage,
     get_user_brand,
@@ -239,8 +242,8 @@ async def admin_analytics(days: int = 7, brand_hash: str = Depends(require_admin
         s["avg_ms"] = round(s["sum_ms"] / s["count"]) if s["count"] else 0
         del s["sum_ms"]
 
-    # --- Cost-per-conversion (INR, 1 USD = 95 INR) ---
-    USD_TO_INR = 95
+    # --- Cost-per-conversion (INR, rate from settings.USD_INR_RATE) ---
+    USD_TO_INR = settings.USD_INR_RATE
     total_cost_inr = round(total_cost_usd * USD_TO_INR, 2)
     cost_per_visit_inr = round((total_cost_usd / visits_booked) * USD_TO_INR, 2) if visits_booked else None
     bookings = funnel_totals.get("booking", 0)
@@ -355,40 +358,67 @@ async def admin_analytics(days: int = 7, brand_hash: str = Depends(require_admin
 # Conversation browser
 # ---------------------------------------------------------------------------
 
+# Max users scanned in one request when a search query or attention filter is
+# active (both require building rows before they can be filtered). Above this
+# the scan is capped to the most-recent N users; `scan_capped` flags it so the
+# caller never mistakes a capped scan for full coverage.
+_CONV_SCAN_CAP = 500
+
+
 @router.get("/admin/conversations")
 async def admin_conversations(
     offset: int = 0,
     limit: int = 50,
     filter: str = "",
+    search: str = "",
     brand_hash: str = Depends(require_admin_brand_key),
 ):
     """Return paginated list of users sorted by most recent activity.
 
     Each entry contains enough metadata to render a conversation list row:
-    uid, name, phone, last_message preview, last_agent, lead_score, human_mode,
-    attention_flags.
+    uid, name, phone, last_message preview, last_agent, lead_score, funnel_stage,
+    last_seen (unix), human_mode, attention_flags, quality_score.
 
     Query params:
       filter: "needs_attention" — return only users with non-empty attention flags
+      search: substring match against name / phone / uid (scans all brand users)
     """
     from core.attention import get_attention_flags
     from db.redis.quality import get_conversation_quality
 
-    # Pull larger batch when filtering (need to scan then paginate)
-    fetch_limit = max(limit * 4, 200) if filter == "needs_attention" else limit
+    search_q = search.strip().lower()
+    # Search and the attention filter both need rows built before they can be
+    # applied, so they scan a bounded recent window and paginate in-memory.
+    needs_scan = bool(search_q) or filter == "needs_attention"
     total_brand = get_brand_active_users_count(brand_hash)
-    uids = get_brand_active_users(brand_hash, offset=0 if filter else offset, limit=fetch_limit if filter else limit)
+    scan_capped = needs_scan and total_brand > _CONV_SCAN_CAP
+
+    if needs_scan:
+        scored = get_brand_active_users_scored(brand_hash, offset=0, limit=_CONV_SCAN_CAP)
+    else:
+        scored = get_brand_active_users_scored(brand_hash, offset=offset, limit=limit)
+
+    # One HGETALL feeds unread for the whole page (vs one GET per row).
+    seen_map = get_admin_seen_map(brand_hash)
 
     rows = []
-    for uid in uids:
+    for uid, last_seen_ts in scored:
         mem = get_user_memory(uid)
-        conv = get_conversation(uid)
-        human_mode = get_human_mode(uid, brand_hash=brand_hash)
-        attention_flags = get_attention_flags(uid)
+        name = mem.get("profile_name") or mem.get("name") or ""
+        phone = get_user_phone(uid) or ""
 
-        # Apply filter: skip users without attention flags
+        # Cheap search filter first — skip the expensive reads below on a miss.
+        if search_q and search_q not in name.lower() \
+                and search_q not in phone.lower() \
+                and search_q not in uid.lower():
+            continue
+
+        attention_flags = get_attention_flags(uid)
         if filter == "needs_attention" and not attention_flags:
             continue
+
+        conv = get_conversation(uid)
+        human_mode = get_human_mode(uid, brand_hash=brand_hash)
 
         # Last message preview (last non-empty text message)
         last_msg = ""
@@ -402,25 +432,31 @@ async def admin_conversations(
 
         cost_data = get_session_cost(uid)
         quality_data = get_conversation_quality(uid)
+        # Unread = the user is waiting: their message is the latest one AND it
+        # arrived after the operator last opened this thread. Bot/operator
+        # replies (last_role != "user") clear it — the thread is handled.
+        unread = last_role == "user" and last_seen_ts > seen_map.get(uid, 0.0)
         rows.append({
             "uid": uid,
-            "name": mem.get("profile_name") or mem.get("name") or "",
-            "phone": get_user_phone(uid) or "",
+            "name": name,
+            "phone": phone,
             "last_message": last_msg,
             "last_role": last_role,
             "last_agent": get_last_agent(uid) or "default",
             "lead_score": mem.get("lead_score", 0),
             "funnel_stage": mem.get("funnel_max", ""),
-            "last_seen": mem.get("last_seen", ""),
+            "last_seen": last_seen_ts,
             "human_mode": human_mode,
             "message_count": len(conv),
-            "cost_inr": round(cost_data.get("cost_usd", 0.0) * 95, 2),
+            "cost_inr": round(cost_data.get("cost_usd", 0.0) * settings.USD_INR_RATE, 2),
             "attention_flags": attention_flags,
             "quality_score": quality_data.get("score"),
+            "unread": unread,
         })
 
-    # When filtering, total is the filtered count and we paginate in-memory
-    if filter == "needs_attention":
+    # When scanning (search / attention filter), total is the filtered count and
+    # we paginate the built rows in-memory.
+    if needs_scan:
         total = len(rows)
         page = rows[offset: offset + limit]
     else:
@@ -433,6 +469,7 @@ async def admin_conversations(
         "offset": offset,
         "limit": limit,
         "has_more": (offset + limit) < total,
+        "scan_capped": scan_capped,
     }
 
 
@@ -440,6 +477,10 @@ async def admin_conversations(
 async def admin_conversation_detail(uid: str, brand_hash: str = Depends(require_admin_brand_key)):
     """Return full conversation thread + user context for a given uid."""
     _require_ownership(uid, brand_hash)
+    # Opening a thread == operator has seen it. Clears the unread flag on the
+    # list (Phase 5). Only ThreadPanel fetches this endpoint, so the read is a
+    # faithful "operator is looking at it" signal.
+    mark_admin_seen(brand_hash, uid)
     conv = get_conversation(uid)
     mem = get_user_memory(uid)
     prefs = get_preferences(uid)
@@ -468,17 +509,56 @@ async def admin_conversation_detail(uid: str, brand_hash: str = Depends(require_
     except Exception:
         quality = {}
 
+    # WhatsApp 24h customer-service window (Phase 4) — server-computed to avoid
+    # client timezone bugs. Meta only allows free-form text within 24h of the
+    # user's last inbound message; outside it only approved templates deliver.
+    whatsapp_window = await _compute_whatsapp_window(uid)
+
     return {
         "uid": uid,
         "messages": conv,
         "memory": mem,
         "preferences": prefs,
         "cost": cost,
+        "cost_inr": round(float(cost.get("cost_usd") or 0.0) * settings.USD_INR_RATE, 2),
         "human_mode": human_mode,
         "last_agent": last_agent,
         "followup_state": followup_state,
         "attention_flags": attention_flags,
         "quality": quality,
+        "whatsapp_window": whatsapp_window,
+    }
+
+
+def _is_whatsapp_uid(uid: str) -> bool:
+    """WhatsApp uids are all-digit phone numbers 10-13 chars; web uids contain
+    non-digits (UUID / 'uat_' prefix). Mirrors db/redis/user.py heuristic."""
+    return uid.isdigit() and 10 <= len(uid) <= 13
+
+
+async def _compute_whatsapp_window(uid: str) -> dict:
+    """Compute the 24h WhatsApp window state for a uid.
+
+    Returns {is_whatsapp, last_inbound_at, expires_at, open}. For web users
+    is_whatsapp=False and the window fields are null (no window applies).
+    """
+    if not _is_whatsapp_uid(uid):
+        return {"is_whatsapp": False, "last_inbound_at": None, "expires_at": None, "open": False}
+
+    # uid IS the WhatsApp phone number (webhooks store inbound rows with
+    # thread_id=user_phone, the full Meta 'from'). Query by the full uid — a
+    # [:12] slice silently mismatched 13-digit numbers and reported the window
+    # "unknown" forever.
+    last_inbound = await pg.get_last_inbound_at(uid)
+    if last_inbound is None:
+        return {"is_whatsapp": True, "last_inbound_at": None, "expires_at": None, "open": False}
+
+    expires_at = last_inbound + timedelta(hours=24)
+    return {
+        "is_whatsapp": True,
+        "last_inbound_at": last_inbound.isoformat() + "Z",
+        "expires_at": expires_at.isoformat() + "Z",
+        "open": datetime.utcnow() < expires_at,
     }
 
 
@@ -507,22 +587,40 @@ async def admin_resume(uid: str, brand_hash: str = Depends(require_admin_brand_k
 async def admin_send_message(uid: str, req: AdminMessageRequest, brand_hash: str = Depends(require_admin_brand_key)):
     """Send a manual message as the admin (human operator).
 
-    The message is delivered via WhatsApp and appended to the conversation
-    history with source="human" so the thread view can style it distinctly.
+    For WhatsApp users the message is delivered via the Meta/Interakt API; for
+    web users it is recorded in history (the channel by which the web client
+    surfaces it on next load). It is appended with source="human" so the thread
+    view can style it distinctly.
 
-    After sending, human_mode is automatically cleared so the AI resumes
-    on the user's next reply. This prevents the silent-bot bug where the
-    admin sends one message and forgets to click "Resume AI", leaving every
-    subsequent user message unanswered.
+    Honest-failure contract (Phase 4): a WhatsApp send that Meta rejects — most
+    commonly the 24h customer-service window being closed — raises 502 and is
+    NOT recorded as delivered, and human_mode stays ON so the operator keeps
+    control. Previously the failure was swallowed and the message was stored as
+    if sent, so the admin saw a delivered bubble the user never received.
+
+    On success, human_mode is automatically cleared so the AI resumes on the
+    user's next reply — preventing the silent-bot bug where the admin forgets
+    to click "Resume AI".
     """
     _require_ownership(uid, brand_hash)
     sent_at = datetime.utcnow().isoformat()
 
-    # Deliver via WhatsApp if platform is whatsapp
-    if req.platform == "whatsapp":
-        await send_text(uid, req.message)
+    # Channel is derived from the uid shape (authoritative), not the client hint.
+    if _is_whatsapp_uid(uid):
+        result = await send_text(uid, req.message)
+        if isinstance(result, dict) and result.get("error"):
+            # Hard delivery failure: do not store-as-sent, keep operator in control.
+            window = await _compute_whatsapp_window(uid)
+            if not window.get("open"):
+                detail = (
+                    "WhatsApp 24h window is closed — free-form replies can't be delivered. "
+                    "The user must message first, or you'll need an approved template."
+                )
+            else:
+                detail = f"WhatsApp delivery failed: {result.get('message', 'unknown error')}"
+            raise HTTPException(status_code=502, detail=detail)
 
-    # Append to conversation history for thread view
+    # Append to conversation history for thread view (WhatsApp success, or web).
     conv = get_conversation(uid)
     conv.append({
         "role": "assistant",
@@ -573,12 +671,12 @@ async def admin_command_center(brand_hash: str = Depends(require_admin_brand_key
         "agents":               day_agents,
         "active_conversations": get_brand_active_users_count(brand_hash),
         "human_mode_count":     human_count,
-        # Cost fields (INR, 1 USD = 95 INR)
-        "cost_inr_today":       round(get_daily_cost(today, brand_hash=brand_hash) * 95, 2),
+        # Cost fields (INR, rate from settings.USD_INR_RATE)
+        "cost_inr_today":       round(get_daily_cost(today, brand_hash=brand_hash) * settings.USD_INR_RATE, 2),
         "agents_cost":          get_agent_costs(today, brand_hash=brand_hash),
         # Cost-per-conversion (today, INR)
-        "cost_per_visit_inr":   round(get_daily_cost(today, brand_hash=brand_hash) * 95 / day_funnel.get("visit", 1), 2) if day_funnel.get("visit") else None,
-        "cost_per_booking_inr": round(get_daily_cost(today, brand_hash=brand_hash) * 95 / day_funnel.get("booking", 1), 2) if day_funnel.get("booking") else None,
+        "cost_per_visit_inr":   round(get_daily_cost(today, brand_hash=brand_hash) * settings.USD_INR_RATE / day_funnel.get("visit", 1), 2) if day_funnel.get("visit") else None,
+        "cost_per_booking_inr": round(get_daily_cost(today, brand_hash=brand_hash) * settings.USD_INR_RATE / day_funnel.get("booking", 1), 2) if day_funnel.get("booking") else None,
         "generated_at":         datetime.utcnow().isoformat(),
     }
 
@@ -646,7 +744,7 @@ def _lead_row(uid: str) -> dict:
         "amenities":        prefs.get("amenities") or prefs.get("must_have_amenities") or [],
         "sharing_types":    prefs.get("sharing_types_enabled") or [],
         # Cost
-        "cost_inr":         round(float(cost.get("cost_usd") or 0.0) * 95, 2),
+        "cost_inr":         round(float(cost.get("cost_usd") or 0.0) * settings.USD_INR_RATE, 2),
         # Move-in intent
         "move_in_date":     mem.get("move_in_date") or "",
         # Follow-up state machine
