@@ -104,7 +104,7 @@ def _require_ownership(uid: str, brand_hash: str) -> None:
     users who haven't been backfilled yet.
     """
     user_brand = get_user_brand(uid)
-    if user_brand and user_brand != brand_hash:
+    if not user_brand or user_brand != brand_hash:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
 
@@ -588,7 +588,7 @@ async def admin_command_center(brand_hash: str = Depends(require_admin_brand_key
 # ---------------------------------------------------------------------------
 
 def _lead_row(uid: str) -> dict:
-    """Build the full 25-field lead dict for a single uid. DRY helper used by both endpoints."""
+    """Build the full lead dict for a single uid. DRY helper used by both endpoints."""
     mem   = get_user_memory(uid)
     prefs = get_preferences(uid)
     phone = get_user_phone(uid) or ""
@@ -598,6 +598,22 @@ def _lead_row(uid: str) -> dict:
     # Budget: prefer structured prefs, fall back to memory strings
     budget_min = prefs.get("min_budget")
     budget_max = prefs.get("max_budget") or mem.get("budget_max") or mem.get("budget")
+
+    # Follow-up state (best-effort)
+    followup_step = ""
+    try:
+        from core.followup import get_followup_state
+        fs = get_followup_state(uid)
+        # fs is a list of state dicts; surface the step of the most recent active entry
+        active = [s for s in (fs or []) if s.get("status") not in ("done", "skipped")]
+        if active:
+            followup_step = active[-1].get("step", "")
+        elif fs:
+            followup_step = fs[-1].get("step", "")
+    except Exception:
+        followup_step = mem.get("followup_step", "")
+
+    shortlisted = mem.get("properties_shortlisted") or []
 
     return {
         # Identity
@@ -613,7 +629,8 @@ def _lead_row(uid: str) -> dict:
         "session_count":    int(mem.get("session_count") or 0),
         # Engagement
         "viewed_count":      len(mem.get("properties_viewed") or []),
-        "shortlisted_count": len(mem.get("properties_shortlisted") or []),
+        "shortlisted_count": len(shortlisted),
+        "properties_shortlisted": shortlisted,
         "visits_count":      len(mem.get("visits_scheduled") or []),
         # Intent signals
         "deal_breakers":    mem.get("deal_breakers") or [],
@@ -630,6 +647,10 @@ def _lead_row(uid: str) -> dict:
         "sharing_types":    prefs.get("sharing_types_enabled") or [],
         # Cost
         "cost_inr":         round(float(cost.get("cost_usd") or 0.0) * 95, 2),
+        # Move-in intent
+        "move_in_date":     mem.get("move_in_date") or "",
+        # Follow-up state machine
+        "followup_step":    followup_step,
         # Outcome (Sprint 3)
         "lead_outcome":     mem.get("lead_outcome") or "",
         "outcome_notes":    mem.get("outcome_notes") or "",
@@ -652,9 +673,9 @@ async def admin_leads(
     """Return paginated, filterable lead list sorted by recency."""
     cutoff_ts = _time.time() - (days_since_active * 86400) if days_since_active else 0
 
-    # Pull a larger batch from the brand's sorted set so we can filter in Python
-    batch_size = max(limit * 4, 200)
-    uids = get_brand_active_users(brand_hash, offset=0, limit=batch_size)
+    # Fetch all brand UIDs so filters don't silently drop users outside an artificial ceiling
+    total_brand_count = get_brand_active_users_count(brand_hash)
+    uids = get_brand_active_users(brand_hash, offset=0, limit=total_brand_count) if total_brand_count else []
 
     rows = []
     for uid in uids:

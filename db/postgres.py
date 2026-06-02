@@ -186,6 +186,14 @@ async def add_brand_hash_columns() -> None:
         """)
     except Exception as e:
         logger.warning("add_brand_hash_columns (leads): %s", e)
+    try:
+        await _pool.execute("""
+            ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_outcome TEXT;
+            ALTER TABLE leads ADD COLUMN IF NOT EXISTS outcome_at TIMESTAMP;
+            ALTER TABLE leads ADD COLUMN IF NOT EXISTS converted_property_id TEXT;
+        """)
+    except Exception as e:
+        logger.warning("add_brand_hash_columns (leads outcome cols): %s", e)
 
 
 async def create_property_documents_table() -> None:
@@ -337,8 +345,19 @@ async def create_leads_table() -> None:
         logger.warning("create_leads_table: %s", e)
 
 
-async def upsert_leads(rows: list[dict], brand_hash: Optional[str] = None) -> None:
-    """Batch upsert enriched lead snapshots. Called fire-and-forget from admin endpoints."""
+async def upsert_leads(
+    rows: list[dict],
+    brand_hash: Optional[str] = None,
+    lead_outcome: Optional[str] = None,
+    outcome_at: Optional[datetime] = None,
+    converted_property_id: Optional[str] = None,
+) -> None:
+    """Batch upsert enriched lead snapshots. Called fire-and-forget from admin endpoints.
+
+    lead_outcome, outcome_at, converted_property_id are optional; when provided they
+    override the stored value via COALESCE (non-null wins). When omitted the existing
+    DB value is preserved.
+    """
     if _pool is None or not rows:
         return
     try:
@@ -349,10 +368,12 @@ async def upsert_leads(rows: list[dict], brand_hash: Optional[str] = None) -> No
                 first_seen, last_seen, session_count, viewed_count, shortlisted_count,
                 visits_count, deal_breakers, must_haves, lead_score, location_pref,
                 budget_min, budget_max, budget, property_type, amenities,
-                sharing_types, cost_usd, brand_hash, synced_at
+                sharing_types, cost_usd, brand_hash,
+                lead_outcome, outcome_at, converted_property_id,
+                synced_at
             )
             VALUES (
-                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,NOW()
+                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,NOW()
             )
             ON CONFLICT (uid) DO UPDATE SET
                 name=EXCLUDED.name, phone=EXCLUDED.phone,
@@ -367,6 +388,9 @@ async def upsert_leads(rows: list[dict], brand_hash: Optional[str] = None) -> No
                 property_type=EXCLUDED.property_type, amenities=EXCLUDED.amenities,
                 sharing_types=EXCLUDED.sharing_types, cost_usd=EXCLUDED.cost_usd,
                 brand_hash=EXCLUDED.brand_hash,
+                lead_outcome=COALESCE(EXCLUDED.lead_outcome, leads.lead_outcome),
+                outcome_at=COALESCE(EXCLUDED.outcome_at, leads.outcome_at),
+                converted_property_id=COALESCE(EXCLUDED.converted_property_id, leads.converted_property_id),
                 synced_at=NOW()
             """,
             [
@@ -393,6 +417,9 @@ async def upsert_leads(rows: list[dict], brand_hash: Optional[str] = None) -> No
                     json.dumps(r.get("sharing_types") or []),
                     float(r.get("cost_usd") or 0.0),
                     brand_hash,
+                    r.get("lead_outcome") or lead_outcome,
+                    r.get("outcome_at") or outcome_at,
+                    r.get("converted_property_id") or converted_property_id,
                 )
                 for r in rows
             ],

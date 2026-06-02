@@ -242,7 +242,7 @@ def update_user_memory(user_id: str, **updates) -> dict:
         mem["first_seen"] = mem["last_seen"]
 
     # Recalculate lead score
-    mem["lead_score"] = _calculate_lead_score(mem)
+    mem["lead_score"] = _calculate_lead_score(mem, user_id=user_id)
 
     # Update funnel_max
     for stage in reversed(FUNNEL_ORDER):
@@ -264,7 +264,7 @@ def _max_funnel(current: str, new: str) -> str:
     return FUNNEL_ORDER[max(cur_idx, new_idx)] if max(cur_idx, new_idx) >= 0 else current
 
 
-def _calculate_lead_score(mem: dict) -> int:
+def _calculate_lead_score(mem: dict, user_id: str = "") -> int:
     """Score 0-100 based on engagement signals. Higher = hotter lead."""
     score = 0
 
@@ -280,9 +280,19 @@ def _calculate_lead_score(mem: dict) -> int:
     # Visits scheduled (max 20)
     score += min(20, len(mem.get("visits_scheduled", [])) * 10)
 
-    # Phone collected (10)
-    if mem.get("phone_collected"):
+    # Phone collected (10) — only award for web users; WhatsApp UIDs are phone numbers (all digits)
+    is_web_user = "-" in user_id  # UUID format (web) vs all-digit WhatsApp number
+    if mem.get("phone_collected") and is_web_user:
         score += 10
+
+    # Funnel depth bonus — deeper stages override shallower (not additive)
+    FUNNEL_BONUS = {
+        "booking_initiated": 15,
+        "payment_completed": 30,
+        "visit_attended": 20,
+    }
+    funnel_stage = mem.get("funnel_max", "")
+    score += FUNNEL_BONUS.get(funnel_stage, 0)
 
     # Preferences completeness (max 10)
     loc = mem.get("last_search_location", "")

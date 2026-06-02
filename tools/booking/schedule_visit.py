@@ -1,4 +1,5 @@
 import httpx
+import uuid
 
 from config import settings
 from core.log import get_logger
@@ -10,6 +11,18 @@ from utils.properties import find_property as _find_property
 from utils.retry import http_post
 
 logger = get_logger("tools.schedule_visit")
+
+
+def _normalize_visit_time(s: str) -> str:
+    """Try multiple time formats, return normalized '%I:%M %p' or original string."""
+    from datetime import datetime
+    for fmt in ('%I:%M %p', '%I:%M%p', '%I %p', '%H:%M', '%I:%M'):
+        try:
+            return datetime.strptime(s.strip(), fmt).strftime('%I:%M %p')
+        except ValueError:
+            continue
+    return s  # passthrough if no format matches
+
 
 TOOL_SCHEMA = {
     "name": "save_visit_time",
@@ -99,7 +112,8 @@ async def save_visit_time(
     # Schedule follow-up: 2 hours after the visit time
     try:
         from datetime import datetime as _dt
-        visit_dt = _dt.strptime(f"{visit_date} {visit_time}", "%d/%m/%Y %I:%M %p")
+        normalized_time = _normalize_visit_time(visit_time)
+        visit_dt = _dt.strptime(f"{visit_date} {normalized_time}", "%d/%m/%Y %I:%M %p")
         seconds_until_visit = max(0, (visit_dt - _dt.now()).total_seconds())
         followup_delay = int(seconds_until_visit) + 7200  # visit time + 2h
         schedule_followup(user_id, "visit_complete", {
@@ -116,7 +130,7 @@ async def save_visit_time(
             brand_hash=get_user_brand(user_id),
         )
     except Exception as e:
-        logger.warning("follow-up scheduling failed: %s", e)
+        logger.error("follow-up scheduling failed: %s", e)
 
     # Create external CRM lead — required for property owner visibility.
     # If this fails, the booking record exists internally but the owner won't see it,
@@ -127,6 +141,8 @@ async def save_visit_time(
     prop_display = prop.get("property_name", property_name)
     phone = get_user_phone(user_id) or ""
 
+    if not eazypg_id:
+        logger.warning("skip CRM lead: no eazypg_id for user=%s property=%s", user_id, property_id)
     if eazypg_id:
         lead_ok = await _create_external_lead(
             user_id, eazypg_id, pg_id, pg_number,
@@ -166,8 +182,6 @@ async def _create_external_lead(
     prefs = get_preferences(user_id)
     budget = prefs.get("min_budget") or prefs.get("max_budget", "")
 
-    from datetime import datetime
-
     phone = get_user_phone(user_id) or ""
     name = get_aadhar_user_name(user_id)
     if not name:
@@ -189,7 +203,7 @@ async def _create_external_lead(
         "visit_time": visit_time,
         "visit_type": visit_type,
         "lead_status": "Visit Scheduled",
-        "firebase_id": f"cust_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}",
+        "firebase_id": str(uuid.uuid4()),
     }
     try:
         data = await http_post(

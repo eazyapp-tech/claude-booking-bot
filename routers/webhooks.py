@@ -54,6 +54,8 @@ from db.redis_store import (
 
 logger = get_logger("routers.webhooks")
 
+_tag_phone = lambda p: f"***{str(p)[-4:]}" if p else "***"
+
 router = APIRouter()
 
 
@@ -94,14 +96,14 @@ async def _drain_and_process(user_phone: str) -> None:
             combined = "\n".join(messages) if len(messages) > 1 else messages[0]
             logger.info(
                 "WhatsApp drain: user=%s count=%d text=%r",
-                user_phone, len(messages), combined[:100],
+                _tag_phone(user_phone), len(messages), combined[:100],
             )
 
             # Run the AI pipeline with the merged intent
             try:
                 response, agent_name, _lang = await run_pipeline(user_phone, combined)
             except Exception as e:
-                logger.error("Pipeline error in drain for %s: %s", user_phone, e)
+                logger.error("Pipeline error in drain for %s: %s", _tag_phone(user_phone), e)
                 response = "I'm sorry, I'm having trouble right now. Please try again."
                 agent_name = "error"
 
@@ -132,13 +134,13 @@ async def _drain_and_process(user_phone: str) -> None:
                 break
             logger.info(
                 "WhatsApp drain: new messages arrived for %s during processing, looping",
-                user_phone,
+                _tag_phone(user_phone),
             )
             # Phase C: signal any in-flight pipeline iteration to abort at its next checkpoint
             set_cancel_requested(user_phone)
 
     except Exception as e:
-        logger.error("Unexpected error in _drain_and_process for %s: %s", user_phone, e)
+        logger.error("Unexpected error in _drain_and_process for %s: %s", _tag_phone(user_phone), e)
     finally:
         # Always release the processing lock so the next message can start a new drain
         wa_processing_release(user_phone)
@@ -210,7 +212,7 @@ async def whatsapp_webhook(request: Request):
     try:
         check_rate_limit(user_phone)
     except RateLimitExceeded as e:
-        logger.warning("WhatsApp rate limited: user=%s tier=%s", user_phone, e.tier)
+        logger.warning("WhatsApp rate limited: user=%s tier=%s", _tag_phone(user_phone), e.tier)
         return JSONResponse({"status": "rate_limited", "retry_after": e.retry_after})
 
     # ── Dedup by wamid (Meta's unique per-message ID) ──────────────────────────
@@ -482,7 +484,7 @@ async def _deliver_followup(user_id: str, message: str) -> bool:
             await send_text(phone, message)
             return True
         except Exception as e:
-            logger.warning("WA delivery to web user failed (phone=%s): %s", phone, e)
+            logger.warning("WA delivery to web user failed (phone=%s): %s", _tag_phone(phone), e)
             # Fall through to in-chat delivery
 
     # Web user without phone or WA delivery failed — save as proper assistant message
