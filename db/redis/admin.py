@@ -57,6 +57,24 @@ def get_brand_active_users(brand_hash: str, offset: int = 0, limit: int = 50) ->
     return [uid.decode() if isinstance(uid, bytes) else uid for uid in raw]
 
 
+def get_brand_active_users_scored(
+    brand_hash: str, offset: int = 0, limit: int = 50
+) -> list[tuple[str, float]]:
+    """Return ``(uid, last_activity_unix)`` for a brand, sorted by recency.
+
+    The sorted-set score is the real ``time.time()`` of the user's last
+    activity (set by ``add_to_brand_active_users``), so it is the accurate
+    source for last-seen — unlike ``user_memory['last_seen']`` which is a
+    date-only ISO string. Pass ``limit < 0`` to return every member.
+    """
+    end = -1 if limit < 0 else offset + limit - 1
+    raw = _r().zrevrange(f"active_users:{brand_hash}", offset, end, withscores=True)
+    return [
+        ((uid.decode() if isinstance(uid, bytes) else uid), float(score))
+        for uid, score in raw
+    ]
+
+
 def get_brand_active_users_count(brand_hash: str) -> int:
     """Return total number of tracked users for a brand."""
     return _r().zcard(f"active_users:{brand_hash}") or 0
@@ -128,3 +146,31 @@ def get_session_cost(uid: str) -> dict:
         "tokens_out": int(float(raw.get(b"tokens_out", 0))),
         "cost_usd": round(float(raw.get(b"cost_usd", 0.0)), 6),
     }
+
+
+# ---------------------------------------------------------------------------
+# Admin "seen" tracking — unread triage (Phase 5)
+# ---------------------------------------------------------------------------
+
+def mark_admin_seen(brand_hash: str, uid: str) -> None:
+    """Record that an operator viewed *uid*'s thread just now.
+
+    Stored as one hash per brand (``admin_seen:{brand_hash}``, field=uid,
+    value=unix ts) so the whole conversation list reads in a single HGETALL
+    rather than one GET per row. No TTL — a thread stays "seen" until the user
+    sends a newer message.
+    """
+    _r().hset(f"admin_seen:{brand_hash}", uid, str(time.time()))
+
+
+def get_admin_seen_map(brand_hash: str) -> dict[str, float]:
+    """Return ``{uid: last_viewed_unix}`` of operator thread-views for a brand."""
+    raw = _r().hgetall(f"admin_seen:{brand_hash}")
+    out: dict[str, float] = {}
+    for k, v in raw.items():
+        key = k.decode() if isinstance(k, bytes) else k
+        try:
+            out[key] = float(v)
+        except (TypeError, ValueError):
+            continue
+    return out

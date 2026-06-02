@@ -54,6 +54,10 @@ class Settings(BaseSettings):
         "claude-sonnet-4-6":         {"in": 3.00,  "out": 15.00},
     }
 
+    # USD→INR conversion rate — single source of truth for all admin cost display.
+    # Override via USD_INR_RATE env var when the rate drifts; no code change needed.
+    USD_INR_RATE: float = 95
+
     # API auth (set in .env; if empty, auth is disabled)
     API_KEY: Optional[str] = None
 

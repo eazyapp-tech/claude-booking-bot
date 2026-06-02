@@ -71,19 +71,6 @@ async def send_text(user_id: str, message: str) -> dict:
         "text": {"body": message},
     }
 
-    # Persist to DB (brand-scoped)
-    pg_ids = get_whitelabel_pg_ids(user_id)
-    await insert_message(
-        thread_id=recipient,
-        user_phone=recipient,
-        message_text=message,
-        message_sent_by=2,
-        platform_type="whatsapp",
-        is_template=False,
-        pg_ids=str(pg_ids),
-        brand_hash=get_user_brand(user_id),
-    )
-
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(config["url"], json=payload, headers=config["headers"])
@@ -96,11 +83,31 @@ async def send_text(user_id: str, message: str) -> dict:
                 msg_id = messages[0].get("id", "")
                 if msg_id:
                     set_response(msg_id, message)
-
-            return resp_data
     except Exception as e:
         logger.error("Error sending text: %s", e)
         return {"error": True, "message": str(e)}
+
+    # Persist to DB only after a confirmed send (brand-scoped). A rejected
+    # send (e.g. out-of-window) must NOT log an outbound row — otherwise the
+    # PG message log + get_message_volume over-count messages never delivered.
+    # A logging failure here must never flip a successful send into a reported
+    # failure, so it is caught and swallowed.
+    try:
+        pg_ids = get_whitelabel_pg_ids(user_id)
+        await insert_message(
+            thread_id=recipient,
+            user_phone=recipient,
+            message_text=message,
+            message_sent_by=2,
+            platform_type="whatsapp",
+            is_template=False,
+            pg_ids=str(pg_ids),
+            brand_hash=get_user_brand(user_id),
+        )
+    except Exception as e:
+        logger.error("Error logging sent WhatsApp message: %s", e)
+
+    return resp_data
 
 
 async def send_image(user_id: str, media_id: str, caption: str = "") -> dict:
