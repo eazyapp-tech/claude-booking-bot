@@ -1,0 +1,29 @@
+name: Reconciliation Cron
+
+# Hourly trigger for the silent-success reconciliation ledger (TOP-1PCT 3).
+# Hits POST /cron/reconcile, which verifies pending reserve/visit claims against
+# RentOk and marks sustained absences as MISSING. The endpoint is idempotent and
+# self-gates on RECONCILE_ENABLED, so over-firing is harmless.
+on:
+  schedule:
+    - cron: '0 * * * *'   # top of every hour (UTC); GitHub may lag a few minutes
+  workflow_dispatch: {}    # allow manual runs from the Actions tab
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /cron/reconcile
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://claude-booking-bot.onrender.com/cron/reconcile" \
+            -H "X-API-Key: ${{ secrets.RECONCILE_API_KEY }}")
+          HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          echo "Status: $HTTP_STATUS"
+          echo "Response: $BODY"
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "Reconcile trigger failed! (HTTP $HTTP_STATUS)"
+            exit 1
+          fi
+          echo "Reconcile triggered successfully!"

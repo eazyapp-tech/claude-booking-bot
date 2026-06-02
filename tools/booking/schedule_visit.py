@@ -109,6 +109,20 @@ async def save_visit_time(
     except Exception:
         pass
 
+    # Reconciliation: the add-booking write succeeded, so record a durable claim
+    # NOW — independent of the secondary CRM lead below (a lead failure has its own
+    # partial-failure message; the booking still landed and must be reconciled).
+    # Fire-and-forget: a ledger failure can never affect the booking.
+    if settings.RECONCILE_ENABLED:
+        try:
+            from db import postgres as pg
+            await pg.insert_claim(
+                uid=user_id, phone=get_user_phone(user_id), property_id=property_id,
+                event="visit", brand_hash=brand_hash_val,
+            )
+        except Exception:
+            logger.warning("recon claim insert failed (visit)", exc_info=True)
+
     # Schedule follow-up: 2 hours after the visit time
     try:
         from datetime import datetime as _dt

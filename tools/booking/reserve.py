@@ -98,5 +98,17 @@ async def reserve_bed(user_id: str, property_name: str, **kwargs) -> str:
             track_property_event(property_id, "booking_initiated", brand_hash=brand_hash_val)
         except Exception:
             pass
+        # Reconciliation: record a durable claim that this reserve landed, so the
+        # hourly cron can detect a silent RentOk write failure. Fire-and-forget —
+        # a ledger failure must never affect the booking the user just made.
+        if settings.RECONCILE_ENABLED:
+            try:
+                from db import postgres as pg
+                await pg.insert_claim(
+                    uid=user_id, phone=None, property_id=property_id,
+                    event="reserve", brand_hash=brand_hash_val,
+                )
+            except Exception:
+                logger.warning("recon claim insert failed (reserve)", exc_info=True)
         return f"Bed reserved successfully at '{prop.get('property_name', property_name)}'!"
     return f"Failed to reserve bed: {data.get('message', 'Unknown error')}"
