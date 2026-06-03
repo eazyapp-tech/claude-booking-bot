@@ -840,7 +840,14 @@ def _to_native(legacy: dict) -> dict:
 
     if ltype == "expandable_sections":
         # Long collapsible detail → text unit on the sheet surface.
-        return make_unit("text", "result", data, surface="sheet")
+        # SUPPLEMENTS-ONLY: carry the sections (+ property_name) but NEVER the
+        # full response body — that is owned by parse_message_parts. Dropping
+        # any "text" key here prevents duplicating the message bubble on web.
+        sections_data = {
+            "property_name": legacy.get("property_name", ""),
+            "sections": legacy.get("sections", []),
+        }
+        return make_unit("text", "result", sections_data, surface="sheet")
 
     kind, default_state = kind_map.get(ltype, ("text", "result"))
     return make_unit(kind, default_state, data)
@@ -901,9 +908,6 @@ def generate_ui_parts(
 
     parts: list[dict] = []
     legacy_types: list[str] = []
-    # A body-bearing unit (card/gallery/sections) stands in for the text bubble;
-    # quick_replies are an accessory and do NOT replace the message body.
-    body_types = {"status_card", "confirmation_card", "image_gallery", "expandable_sections"}
 
     # ── Rich cards (status card, image gallery) — before chips ──
     try:
@@ -956,11 +960,11 @@ def generate_ui_parts(
     if parts and has_card:
         chips = []  # card has its own actions
 
-    # ── Default: a text unit carries the message body whenever no body-bearing
-    #    unit (card/gallery/sections) already represents it. Inserted before the
-    #    chips so the bubble renders above its accessory chips. ──
-    if not any(t in body_types for t in legacy_types):
-        parts.insert(0, make_unit("text", "result", {"text": response_text}))
+    # SUPPLEMENTS-ONLY: generate_ui_parts never emits the response body itself.
+    # The body is owned by parse_message_parts (web) / send_text (WhatsApp);
+    # emitting it here too would double-render it on web (ingress has no dedup).
+    # This function contributes only supplements (honesty rails, media carousels,
+    # expandable sections, quick-reply chips). A plain reply → no body unit here.
 
     if chips:
         parts.append(_to_native({"type": "quick_replies", "chips": chips}))
