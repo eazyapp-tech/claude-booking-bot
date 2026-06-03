@@ -45,7 +45,8 @@ jobs:
             test_gender_filter.py \
             test_shortlist_contract.py \
             test_admin_login.py \
-            test_quality_analytics.py; do
+            test_quality_analytics.py \
+            test_listing_leak.py; do
             echo "::group::$t"
             python "$t"
             echo "::endgroup::"

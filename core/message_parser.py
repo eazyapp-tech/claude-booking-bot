@@ -17,6 +17,30 @@ from db.redis_store import get_property_info_map, get_preferences
 
 logger = get_logger("core.message_parser")
 
+# ── Raw-media-URL safety net ────────────────────────────────────────────
+# When the broker drifts off the listing format (Haiku variance) and no
+# carousel detector matches, the reply — including any raw "Image: <cdn-url>"
+# lines — would otherwise render verbatim as plain text. Strip those so a user
+# can NEVER see a raw azureedge/blob .mp4/.jpg URL in chat. Applied ONLY to
+# leftover text parts (after block extraction, which consumes Image: lines into
+# the card), so legitimate non-media links in prose are preserved.
+_RAW_MEDIA_LINE = re.compile(
+    r"(?im)^[ \t]*(?:image|video|photo|link)s?\s*:\s*https?://\S+[ \t]*$"
+)
+_BARE_MEDIA_URL = re.compile(
+    r"(?i)\bhttps?://\S*(?:azureedge\.net|blob\.core\.windows\.net|rentok-?storage)\S*"
+)
+
+
+def _strip_raw_media_urls(md: str) -> str:
+    """Remove leaked 'Image:/Link: <url>' lines and bare CDN media URLs from text."""
+    if not md:
+        return md
+    md = _RAW_MEDIA_LINE.sub("", md)
+    md = _BARE_MEDIA_URL.sub("", md)
+    md = re.sub(r"\n{3,}", "\n\n", md)
+    return md.strip()
+
 
 def parse_message_parts(markdown: str, user_id: str) -> list[dict]:
     """Parse agent markdown into structured parts[].
@@ -42,6 +66,15 @@ def parse_message_parts(markdown: str, user_id: str) -> list[dict]:
     if compact_matches:
         return _build_carousel_parts(markdown, compact_matches, False, user_id)
 
+    # 2b. Tolerant numbered format — Haiku drift: the number may sit OUTSIDE the
+    #     bold ("1. **Name**") or the name may be unbolded ("1. Name"), as long as
+    #     a 📍 meta line follows. Superset of (2); placed after so (2) wins first.
+    tolerant_matches = list(re.finditer(
+        r"(?:\*\*)?\s*(\d+)\.\s+(?:\*\*)?(.+?)(?:\*\*)?\s*\n\s*(📍[^\n]+)", markdown
+    ))
+    if tolerant_matches:
+        return _build_carousel_parts(markdown, tolerant_matches, False, user_id)
+
     # 3. Legacy bold format: **N. Name** — ₹X
     legacy_matches = list(re.finditer(
         r"\*\*(\d+)\.\s*(.+?)\*\*\s*[—–\-]\s*(₹[\d,]+(?:\/\s*(?:month|mo))?)",
@@ -66,8 +99,9 @@ def parse_message_parts(markdown: str, user_id: str) -> list[dict]:
         enrichment = _enrich_h3_matches(markdown, keycap_matches)
         return _build_carousel_parts(markdown, keycap_matches, True, user_id, enrichment)
 
-    # 6. Default — single text part
-    return [{"type": "text", "markdown": markdown}]
+    # 6. Default — single text part (strip any raw media URLs the broker leaked
+    #    into prose when it drifted off every listing format).
+    return [{"type": "text", "markdown": _strip_raw_media_urls(markdown)}]
 
 
 # ------------------------------------------------------------------
@@ -331,13 +365,17 @@ def _build_carousel_parts(
 
     parts = []
     if pre_text:
-        parts.append({"type": "text", "markdown": pre_text})
+        pre_text = _strip_raw_media_urls(pre_text)
+        if pre_text:
+            parts.append({"type": "text", "markdown": pre_text})
     carousel_part = {"type": "property_carousel", "properties": properties}
     if map_center:
         carousel_part["map_center"] = map_center
     parts.append(carousel_part)
     if post_text:
-        parts.append({"type": "text", "markdown": post_text})
+        post_text = _strip_raw_media_urls(post_text)
+        if post_text:
+            parts.append({"type": "text", "markdown": post_text})
     return parts
 
 
