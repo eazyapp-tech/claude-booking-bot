@@ -9,6 +9,7 @@ import time
 
 import core.state as state
 from core.log import get_logger
+from core.signals import reset_signals
 from core.language import detect_language
 from core.router import apply_keyword_safety_net
 from db.redis_store import (
@@ -35,6 +36,9 @@ logger = get_logger("pipeline")
 
 async def run_pipeline(user_id: str, message: str) -> tuple[str, str, str]:
     """Run the full supervisor → agent pipeline. Returns (response, agent_name, language)."""
+    # Clean slate for this turn's truth signals (read at egress to shape honest UI).
+    reset_signals()
+
     # Resolve brand_hash once for all downstream calls
     brand_hash = get_user_brand(user_id)
 

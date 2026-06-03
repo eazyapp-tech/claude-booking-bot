@@ -22,6 +22,7 @@ from core.log import get_logger
 from core.message_parser import parse_message_parts
 from core.pipeline import run_pipeline, _route_agent
 from core.rate_limiter import check_rate_limit
+from core.signals import reset_signals
 from core.tenancy import resolve_web_brand
 from core.ui_parts import generate_ui_parts, make_error_part
 from db import postgres as pg
@@ -220,6 +221,8 @@ async def chat_stream(req: ChatRequest):
     clear_cancel_requested(req.user_id)
 
     async def event_generator():
+        # Clean slate for this turn's truth signals (read at egress to shape honest UI).
+        reset_signals()
         # Emit agent_start so frontend knows which agent is handling + locale
         yield f"event: agent_start\ndata: {json.dumps({'agent': agent_name, 'locale': language})}\n\n"
 
