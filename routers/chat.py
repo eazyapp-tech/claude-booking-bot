@@ -25,7 +25,7 @@ from core.pipeline import run_pipeline, _route_agent
 from core.rate_limiter import check_rate_limit
 from core.signals import current_signals, reset_signals
 from core.tenancy import resolve_web_brand
-from core.ui_parts import generate_ui_parts, make_error_part
+from core.ui_parts import generate_ui_parts, make_error_part, make_human_handoff_part
 from db import postgres as pg
 from db.redis_store import (
     set_account_values,
@@ -34,6 +34,7 @@ from db.redis_store import (
     get_user_brand,
     add_to_brand_active_users,
     get_human_mode,
+    get_brand_config_by_hash,
     get_conversation,
     save_conversation,
     get_user_language,
@@ -125,9 +126,12 @@ async def chat(req: ChatRequest):
 
     response, agent_name, language = await run_pipeline(req.user_id, req.message)
 
-    # Human mode — AI bypassed; admin is responding manually
+    # Human mode — AI bypassed; admin is responding manually. Don't return dead air:
+    # stream a teammate-identity note so the web user sees who is now helping.
     if agent_name == "human":
-        return ChatResponse(response="", agent="human", parts=[], locale=language)
+        _bn = (get_brand_config_by_hash(brand_hash or get_user_brand(req.user_id)) or {}).get("brand_name", "")
+        return ChatResponse(response="", agent="human",
+                            parts=[make_human_handoff_part(_bn)], locale=language)
 
     # Persist to Postgres (brand-scoped). Fall back to any prior brand tag if this
     # turn carried no token (e.g. resumed conversation).
@@ -188,15 +192,18 @@ async def chat_stream(req: ChatRequest):
     # Brand used in save_conversation + PG inserts below; fall back to any prior tag.
     stream_brand_hash = brand_hash or get_user_brand(req.user_id)
 
-    # Human takeover bypass — save user message and emit empty stream so admin handles it
+    # Human takeover bypass — save user message and stream a teammate-identity note so the
+    # web user isn't met with dead air while the admin handles the conversation manually.
     if get_human_mode(req.user_id, brand_hash=stream_brand_hash):
         conv = get_conversation(req.user_id)
         conv.append({"role": "user", "content": req.message})
         save_conversation(req.user_id, conv, brand_hash=stream_brand_hash)
         language = get_user_language(req.user_id) or "en"
+        _bn = (get_brand_config_by_hash(stream_brand_hash) or {}).get("brand_name", "")
+        _handoff_parts = [make_human_handoff_part(_bn)]
 
         async def _human_stream():
-            yield f"event: done\ndata: {json.dumps({'agent': 'human', 'full_response': '', 'parts': [], 'locale': language})}\n\n"
+            yield f"event: done\ndata: {json.dumps({'agent': 'human', 'full_response': '', 'parts': _handoff_parts, 'locale': language})}\n\n"
 
         return StreamingResponse(
             _human_stream(),

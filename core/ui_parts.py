@@ -796,6 +796,26 @@ def make_error_part(
     return make_unit("status_rail", "error", data)
 
 
+def make_human_handoff_part(brand_name: str = "") -> dict:
+    """Native status_rail acknowledging a human teammate has taken over (WEB channel only).
+
+    Replaces the silent '' the web human-mode path used to return: instead of dead air,
+    the user sees who is now helping. variant "ok" (a calm system note, no buttons).
+    WhatsApp intentionally stays silent on takeover — the admin's replies push directly
+    via channels.whatsapp.send_text, so a per-message bot note there would be redundant.
+    """
+    who = brand_name.strip() if brand_name and brand_name.strip() else "our team"
+    return make_unit(
+        "status_rail", "result",
+        {
+            "variant": "ok",
+            "title": f"You're chatting with {who} now",
+            "body": "A teammate has joined and will reply here shortly.",
+            "retry": False,
+        },
+    )
+
+
 def make_empty_part(message: str) -> dict:
     """Create a native status_rail/empty unit for honest empty states.
 

@@ -543,6 +543,27 @@ def section_partial_receipt_is_status_rail_warn_not_confirmation():
           old_html and "couldn't sync" not in old_html, repr(old_html))
 
 
+def section_web_human_handoff_streams_teammate_identity():
+    """D5: a web turn in human mode used to stream '' (dead air). It must instead emit a
+    teammate-identity unit so the user sees who is helping. (Web-only — WhatsApp stays
+    silent because the admin's replies push directly via send_text.)"""
+    from core.ui_parts import make_human_handoff_part
+    u = make_human_handoff_part("OxOtel")
+    check("handoff: valid status_rail unit", is_valid_unit(u) and u["kind"] == "status_rail", repr(u))
+    check("handoff: variant ok (a calm system note, not an error)",
+          u["data"].get("variant") == "ok", repr(u))
+    html = mirror_render(u)
+    check("handoff: renders non-empty and carries the brand identity",
+          bool(html) and "OxOtel" in html, repr(html))
+    check("handoff: no confirm/cancel buttons (it is a status note, not a card)",
+          html and "Confirm" not in html and "Cancel" not in html, repr(html))
+    # Graceful: no brand name → a sensible generic identity, never blank.
+    g = make_human_handoff_part("")
+    ghtml = mirror_render(g)
+    check("handoff: empty brand → generic 'our team' identity (never blank dead air)",
+          bool(ghtml) and "our team" in ghtml.lower(), repr(ghtml))
+
+
 def section_end_to_end_every_unit_renders_on_live_fe():
     """Drive the REAL generate_ui_parts path and prove every emitted unit renders."""
     for agent in ("default", "broker", "booking", "profile"):
@@ -572,6 +593,7 @@ if __name__ == "__main__":
     section_comparison_emits_structured_unit()
     section_detail_sheet_enriched_renders_gallery_and_sharing()
     section_partial_receipt_is_status_rail_warn_not_confirmation()
+    section_web_human_handoff_streams_teammate_identity()
     section_end_to_end_every_unit_renders_on_live_fe()
     print(f"\n{'='*52}\n  {_passed} passed, {_failed} failed\n{'='*52}")
     sys.exit(1 if _failed else 0)
