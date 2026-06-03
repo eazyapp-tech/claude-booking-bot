@@ -6,6 +6,7 @@ import httpx
 
 from config import settings
 from core.log import get_logger
+from core.signals import record_signal
 
 logger = get_logger("tools.search")
 from db.redis_store import (
@@ -328,6 +329,7 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
         logger.info("after round 2 merge: %d total", len(properties))
 
     if not properties:
+        record_signal(search_ran=True, result_count=0)
         return "No properties are currently available in this region."
 
     logger.info("found %d properties", len(properties))
@@ -397,11 +399,16 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
             # the list with options the user cannot actually book.
             logger.info("gender filter removed ALL %d properties (pref=%s)",
                         removed, pg_available_for)
+            record_signal(search_ran=True, result_count=0)
             return (
                 f"I couldn't find any properties matching your requirement "
                 f"({pg_available_for}) in this area — the available options here "
                 f"are for a different gender. Want me to widen the search or try a nearby area?"
             )
+
+    # Final result set resolved (post-score, post gender hard-filter) — record
+    # the real count so egress can shape honest UI (scarcity only from truth).
+    record_signal(search_ran=True, result_count=len(properties))
 
     existing_map = get_property_info_map(user_id)
     # Build index for fast dedup by prop_id → position in existing_map
