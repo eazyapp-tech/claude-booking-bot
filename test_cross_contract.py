@@ -221,6 +221,88 @@ def mirror_render(unit):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# D3: faithful mirror of composePropertySheet (property-sheet.js §3.2).
+#
+# The detail sheet composes CLIENT-SIDE from the stashed carousel item (NOT a
+# backend surface:"sheet" unit). These mirrors read EXACTLY the keys the JS reads,
+# so a backend item that omits/mis-shapes a key renders the same blank the user
+# would see. Each section builder returns falsy → that section is HIDDEN (no empty
+# shell). _m_compose_sheet returns the list of (section, payload) that actually render.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sheet_amenity_list(amenities):
+    # _amenityList: string "a, b" or array → trimmed, de-duped (case-insensitive) list.
+    if not amenities:
+        return []
+    lst = amenities if isinstance(amenities, list) else str(amenities).split(",")
+    lst = [a for a in (str(x).strip() for x in lst) if a]
+    seen, out = set(), []
+    for a in lst:
+        key = " ".join(a.lower().split())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(a)
+    return out
+
+
+def _sheet_media_items(d):
+    # _mediaItems: images|media|gallery (array of string|{url|src}) → [{url}]; else the
+    # single `image` as a 1-item gallery; else []. Items with no url are dropped.
+    explicit = d.get("images") or d.get("media") or d.get("gallery")
+    if isinstance(explicit, list) and explicit:
+        out = []
+        for it in explicit:
+            if isinstance(it, str):
+                out.append({"url": it})
+            elif isinstance(it, dict):
+                out.append({"url": it.get("url") or it.get("src") or ""})
+        return [m for m in out if m["url"]]
+    if d.get("image"):
+        return [{"url": d["image"]}]
+    return []
+
+
+def _sheet_sharing_options(d):
+    # _sharingOptions: sharing|sharing_options|rooms|room_types — must be a non-empty
+    # ARRAY (Array.isArray); each item string | {type|label|sharing|name, price|rent|amount}.
+    # A STRING value (the old cached display form) fails Array.isArray → [] (renders blank).
+    raw = d.get("sharing") or d.get("sharing_options") or d.get("rooms") or d.get("room_types")
+    if not isinstance(raw, list) or not raw:
+        return []
+    out = []
+    for i, o in enumerate(raw):
+        if isinstance(o, str):
+            out.append({"label": o, "price": ""})
+        elif isinstance(o, dict):
+            label = o.get("type") or o.get("label") or o.get("sharing") or o.get("name") or f"Option {i + 1}"
+            price = o.get("price") or o.get("rent") or o.get("amount") or ""
+            out.append({"label": label, "price": str(price) if price else ""})
+    return out
+
+
+def _m_compose_sheet(d, flags=None):
+    """Mirror composePropertySheet body-section gating. Returns [(section, payload), ...]
+    for sections that actually render (empty/absent data → section omitted)."""
+    flags = flags or {}
+    sections = []
+    media = _sheet_media_items(d)
+    if media:
+        sections.append(("gallery", [m["url"] for m in media]))
+    price = d.get("price") or d.get("rent") or ""
+    free = (not flags.get("PAYMENT_REQUIRED")) and (d.get("free_cancellation") is True or bool(d.get("free_cancellation_days")))
+    if price or free:
+        sections.append(("price", str(price)))
+    sharing = _sheet_sharing_options(d)
+    if sharing:
+        sections.append(("sharing", sharing))
+    amenities = _sheet_amenity_list(d.get("amenities"))
+    if amenities:
+        sections.append(("amenities", amenities))
+    return sections
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Deliverable-1 guards: every _to_native row, plus the adversarial OLD-shape proof.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -358,6 +440,69 @@ def section_comparison_emits_structured_unit():
           repr([u["kind"] for u in units2]))
 
 
+def section_detail_sheet_enriched_renders_gallery_and_sharing():
+    """D3: the carousel item the FE stashes must feed composePropertySheet a multi-image
+    gallery + structured sharing options, so the detail sheet stops looking thin."""
+    from utils.api import parse_sharing_types_structured
+    from core.message_parser import _sheet_enrichment
+
+    # Raw RentOk sharing field as it arrives in a search result (p_sharing_types_enabled).
+    raw_sharing = [
+        {"sharing_type": "Double", "is_enabled": True, "rent": 5000},
+        {"sharing_type": "Single", "is_enabled": True, "rent": 7000},
+        {"sharing_type": "Triple", "is_enabled": False, "rent": 4000},  # disabled → dropped
+    ]
+    struct = parse_sharing_types_structured(raw_sharing)
+    check("sheet: parse_sharing_types_structured drops disabled + yields {label,price}",
+          len(struct) == 2 and struct[0] == {"label": "Double", "price": "₹5000/mo"},
+          repr(struct))
+
+    # A cached property_info_map entry as set_property_info_map now writes it.
+    info = {
+        "property_name": "Sunrise PG", "property_location": "Kurla",
+        "property_rent": "8000", "amenities": "WiFi, AC, Power Backup",
+        "images": ["a.jpg", "b.jpg", "c.jpg"],
+        "sharing_types_list": struct,
+    }
+    enr = _sheet_enrichment(info)
+    check("sheet: _sheet_enrichment lifts images + sharing from the cache",
+          enr.get("images") == ["a.jpg", "b.jpg", "c.jpg"] and enr.get("sharing") == struct,
+          repr(enr))
+
+    # The carousel item message_parser builds = base card fields + sheet enrichment.
+    item = {"name": "Sunrise PG", "location": "Kurla", "rent": "8000",
+            "image": "a.jpg", "amenities": "WiFi, AC, Power Backup", **enr}
+    sections = dict(_m_compose_sheet(item))
+    check("sheet: gallery renders ALL images (multi-image, not just the cover)",
+          sections.get("gallery") == ["a.jpg", "b.jpg", "c.jpg"], repr(sections.get("gallery")))
+    check("sheet: 'Choose sharing' section renders the structured options",
+          [s["label"] for s in sections.get("sharing", [])] == ["Double", "Single"],
+          repr(sections.get("sharing")))
+    check("sheet: amenities section still renders", bool(sections.get("amenities")), repr(sections))
+    rich = [k for k in ("gallery", "sharing", "amenities") if k in sections]
+    check("sheet: enriched item is NOT thin (gallery + sharing + amenities all present)",
+          len(rich) == 3, repr(rich))
+
+    # Adversarial 1: a thin item (no enrichment) degrades — single-image gallery, NO sharing.
+    thin = {"name": "Sunrise PG", "rent": "8000", "image": "a.jpg", "amenities": "WiFi"}
+    tsec = dict(_m_compose_sheet(thin))
+    check("sheet: thin item has NO sharing section (degrades, no empty shell)",
+          "sharing" not in tsec, repr(tsec))
+    check("sheet: thin item gallery degrades to the single cover image",
+          tsec.get("gallery") == ["a.jpg"], repr(tsec.get("gallery")))
+
+    # Adversarial 2: the OLD cached STRING sharing renders BLANK on the sheet
+    # (_sharingOptions requires an array — Array.isArray on a string is false).
+    old = {"name": "X", "rent": "8000", "sharing": "Double (₹5000/mo), Single (₹7000/mo)"}
+    osec = dict(_m_compose_sheet(old))
+    check("sheet: OLD string sharing renders BLANK (proves structured array is required)",
+          "sharing" not in osec, repr(osec))
+
+    # _sheet_enrichment is purely additive — an entry without the new keys yields {}.
+    check("sheet: _sheet_enrichment returns {} for a legacy cache entry (graceful)",
+          _sheet_enrichment({"property_name": "Old"}) == {}, "non-empty enrichment from bare entry")
+
+
 def section_end_to_end_every_unit_renders_on_live_fe():
     """Drive the REAL generate_ui_parts path and prove every emitted unit renders."""
     for agent in ("default", "broker", "booking", "profile"):
@@ -385,6 +530,7 @@ if __name__ == "__main__":
     section_expandable_is_inline_text_not_sheet()
     section_confirmation_ask_renders_with_its_cta()
     section_comparison_emits_structured_unit()
+    section_detail_sheet_enriched_renders_gallery_and_sharing()
     section_end_to_end_every_unit_renders_on_live_fe()
     print(f"\n{'='*52}\n  {_passed} passed, {_failed} failed\n{'='*52}")
     sys.exit(1 if _failed else 0)

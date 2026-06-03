@@ -324,6 +324,9 @@ def _build_carousel_parts(
             "lng": lng,
             "score": score,
             "amenities": amenities,
+            # Sheet-only richness (multi-image gallery + structured sharing) — additive,
+            # rides on the stashed item the detail sheet composes from.
+            **_sheet_enrichment(redis_info),
         })
 
     # Text before first match
@@ -377,6 +380,26 @@ def _build_carousel_parts(
         if post_text:
             parts.append({"type": "text", "markdown": post_text})
     return parts
+
+
+def _sheet_enrichment(redis_info: dict | None) -> dict:
+    """Sheet-only enrichment fields lifted from the cached property info_map so the
+    detail sheet (eazypg-chat property-sheet.js composePropertySheet) renders a
+    multi-image gallery + a 'Choose sharing' section. These keys ride on the carousel
+    item the frontend stashes, so they reach the sheet verbatim without changing the
+    lean card view-model. Purely additive: returns {} for legacy cache entries that
+    predate these keys, so the sheet degrades gracefully (sections hidden, no shells).
+    """
+    if not redis_info:
+        return {}
+    out = {}
+    images = redis_info.get("images")
+    if images:
+        out["images"] = images
+    sharing = redis_info.get("sharing_types_list")
+    if sharing:
+        out["sharing"] = sharing
+    return out
 
 
 def _find_in_info_map(name: str, info_map: list) -> dict | None:
