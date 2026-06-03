@@ -20,6 +20,7 @@ Part types emitted:
 """
 
 import re
+from core.contract import make_unit
 from core.log import get_logger
 from db.redis_store import get_property_info_map, get_preferences, get_property_images_id
 
@@ -770,40 +771,125 @@ def make_error_part(
     message: str = "We're having trouble right now. This usually resolves in a moment.",
     retry_label: str = "Try Again",
     retry_message: str = "",
+    retry: bool = True,
 ) -> dict:
-    """Create an error_card UI part for pipeline/streaming errors.
+    """Create a native status_rail/error unit for pipeline/streaming errors.
 
-    Errors should feel warm and helpful, not alarming. The amber card
-    communicates "we know, we're on it" — not "everything is broken".
-    A retry button gives users agency instead of helplessness.
+    Errors should feel warm and helpful, not alarming — "we know, we're on it",
+    not "everything is broken". A retry affordance gives users agency.
+
+    An error is NEVER an empty state (see make_empty_part): a failure must not
+    be reported as "no listings". status_rail/error carries variant "err".
+
+    Backward-compatible with the legacy keyword call
+    (title/message/retry_label/retry_message) used by routers/chat.py.
     """
-    part = {
-        "type": "error_card",
-        "icon": "warning",
+    data = {
+        "variant": "err",
         "title": title,
         "message": message,
+        "retry": retry,
     }
     if retry_label and retry_message:
-        part["retry_action"] = retry_label
-        part["retry_message"] = retry_message
-    return part
+        data["retry_label"] = retry_label
+        data["retry_message"] = retry_message
+    return make_unit("status_rail", "error", data)
+
+
+def make_empty_part(message: str) -> dict:
+    """Create a native status_rail/empty unit for honest empty states.
+
+    Distinct from make_error_part: an empty result (e.g. a search that ran and
+    genuinely found nothing) is NOT a failure. It carries variant "warn" and
+    state "empty" so the frontend never confuses "found nothing" with "broke".
+    """
+    return make_unit(
+        "status_rail", "empty",
+        {"variant": "warn", "title": message, "retry": False},
+    )
 
 
 # ── Main entry point ─────────────────────────────────────────────────────
 
+def _to_native(legacy: dict) -> dict:
+    """Map a legacy {"type": ...} producer dict onto a native
+    {kind, state, data, surface} unit. Same content, new shape.
+
+    Only the OUTPUT SHAPE changes — every legacy producer keeps its triggers
+    and the data it carried (minus the redundant "type" tag).
+    """
+    # Only the producers that fall through to the lookup below
+    # (status_card, confirmation_card) live here. image_gallery,
+    # quick_replies, and expandable_sections each have a dedicated
+    # early-return block that owns its kind/state inline.
+    kind_map = {
+        "status_card": ("confirmation", "result"),
+        "confirmation_card": ("confirmation", "awaiting_input"),
+    }
+    ltype = legacy.get("type")
+    data = {k: v for k, v in legacy.items() if k != "type"}
+
+    if ltype == "image_gallery":
+        # carousel(media): inner items become data.items, payload tag added.
+        data = {"payload": "media", "property_name": legacy.get("property_name", ""),
+                "items": legacy.get("images", [])}
+        return make_unit("carousel", "result", data)
+
+    if ltype == "quick_replies":
+        return make_unit("quick_replies", "result", {"replies": legacy.get("chips", [])})
+
+    if ltype == "expandable_sections":
+        # Long collapsible detail → text unit on the sheet surface.
+        return make_unit("text", "result", data, surface="sheet")
+
+    kind, default_state = kind_map.get(ltype, ("text", "result"))
+    return make_unit(kind, default_state, data)
+
+
 def generate_ui_parts(
     response_text: str,
-    agent_name: str,
-    user_id: str,
+    agent: str = "",
+    user_id: str = "",
     locale: str = "en",
+    *,
+    signals: dict | None = None,
 ) -> list[dict]:
-    """Generate UI parts to append to the parts[] array.
+    """Generate native UI units {kind, state, data, surface} for the parts[] array.
 
     Called after the agent produces its text response. Analyzes the response
-    + context to produce structured UI parts the frontend renders.
+    + context (+ optional structured `signals`) to produce native units the
+    frontend renderer registry consumes.
 
-    Returns list of part dicts (may be empty).
+    `signals` is optional — when omitted, behaviour is unchanged from before
+    (same triggers → same content, just the native shape). When provided it
+    drives the honesty branches: empty ≠ error, and partial success is its
+    own state.
+
+    Returns a list of native unit dicts (may be empty).
     """
+    signals = signals or {}
+    agent_name = agent
+
+    # ── Honesty branches (signal-driven) ──────────────────────────────────
+    # An empty result and a failure are DIFFERENT states. Never report a
+    # failure as "no listings", and never report an empty search as an error.
+    if signals.get("search_ran") and signals.get("result_count", None) == 0:
+        return [make_empty_part(response_text or "No matches found.")]
+    if signals.get("api_error"):
+        return [make_error_part(signals.get("error_message") or response_text or "Something went wrong")]
+
+    # Partial success: action committed but a downstream step failed.
+    if signals.get("booking_held") and signals.get("crm_synced") is False:
+        return [make_unit(
+            "confirmation", "partial",
+            {
+                "title": "Bed held",
+                "ok": ["Your bed is held"],
+                "warn": ["We couldn't sync your details — our team will follow up"],
+                "body": response_text,
+            },
+        )]
+
     if not response_text or not response_text.strip():
         return []
 
@@ -813,27 +899,34 @@ def generate_ui_parts(
     # Detect response context
     ctx = _detect_context(response_text, agent_name)
 
-    parts = []
+    parts: list[dict] = []
+    legacy_types: list[str] = []
+    # A body-bearing unit (card/gallery/sections) stands in for the text bubble;
+    # quick_replies are an accessory and do NOT replace the message body.
+    body_types = {"status_card", "confirmation_card", "image_gallery", "expandable_sections"}
 
     # ── Rich cards (status card, image gallery) — before chips ──
     try:
         status = _generate_status_card(response_text, ctx, user_id, locale)
         if status:
-            parts.append(status)
+            legacy_types.append(status["type"])
+            parts.append(_to_native(status))
     except Exception as e:
         logger.warning("status_card generation failed: %s", e)
 
     try:
         gallery = _generate_image_gallery(response_text, user_id)
         if gallery:
-            parts.append(gallery)
+            legacy_types.append(gallery["type"])
+            parts.append(_to_native(gallery))
     except Exception as e:
         logger.warning("image_gallery generation failed: %s", e)
 
     try:
         confirm = _generate_confirmation_card(response_text, ctx, user_id, locale)
         if confirm:
-            parts.append(confirm)
+            legacy_types.append(confirm["type"])
+            parts.append(_to_native(confirm))
     except Exception as e:
         logger.warning("confirmation_card generation failed: %s", e)
 
@@ -842,7 +935,8 @@ def generate_ui_parts(
         try:
             exp = _generate_expandable_sections(response_text, user_id)
             if exp:
-                parts.append(exp)
+                legacy_types.append(exp["type"])
+                parts.append(_to_native(exp))
         except Exception as e:
             logger.warning("expandable_sections generation failed: %s", e)
 
@@ -858,11 +952,17 @@ def generate_ui_parts(
         chips = _default_chips(response_text, ctx, locale)
 
     # If we generated a status card or confirmation card, suppress default chips
-    has_card = any(p["type"] in ("status_card", "confirmation_card") for p in parts)
+    has_card = any(t in ("status_card", "confirmation_card") for t in legacy_types)
     if parts and has_card:
         chips = []  # card has its own actions
 
+    # ── Default: a text unit carries the message body whenever no body-bearing
+    #    unit (card/gallery/sections) already represents it. Inserted before the
+    #    chips so the bubble renders above its accessory chips. ──
+    if not any(t in body_types for t in legacy_types):
+        parts.insert(0, make_unit("text", "result", {"text": response_text}))
+
     if chips:
-        parts.append({"type": "quick_replies", "chips": chips})
+        parts.append(_to_native({"type": "quick_replies", "chips": chips}))
 
     return parts
