@@ -2,7 +2,6 @@ import httpx
 
 from config import settings
 from core.log import get_logger
-from core.signals import record_signal
 from db.redis_store import track_funnel, get_user_brand, track_property_event
 from utils.api import user_error
 from utils.properties import find_property as _find_property
@@ -93,7 +92,6 @@ async def reserve_bed(user_id: str, property_name: str, **kwargs) -> str:
         return user_error("reserve the bed", e, logger=logger)
 
     if data.get("success"):
-        record_signal(booking_held=True, crm_synced=True)
         brand_hash_val = get_user_brand(user_id)
         track_funnel(user_id, "booking_initiated", brand_hash=brand_hash_val)
         try:

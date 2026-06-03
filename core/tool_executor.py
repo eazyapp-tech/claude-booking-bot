@@ -4,7 +4,6 @@ from typing import Any, Callable
 
 from config import settings
 from core.log import get_logger
-from core.signals import record_signal
 from core.tool_boundary import IDEMPOTENT_TOOLS, idempotency_key, validate_tool_input
 from utils.properties import find_property
 
@@ -154,9 +153,6 @@ class ToolExecutor:
                 err = (f"timed out after {settings.TOOL_TIMEOUT_SECONDS}s"
                        if isinstance(e, asyncio.TimeoutError) else type(e).__name__)
             logger.error("Error executing %s: %s", tool_name, err, exc_info=True)
-            # Truth signal: an upstream tool call failed this turn. Egress reads
-            # this to render an error rail (≠ empty), never a false "no results".
-            record_signal(api_error=True, error_message=err)
             # Fire-and-forget: log structured error event to PostgreSQL
             try:
                 from db.postgres import insert_error_event

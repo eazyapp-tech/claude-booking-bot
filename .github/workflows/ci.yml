@@ -46,13 +46,6 @@ jobs:
             test_shortlist_contract.py \
             test_admin_login.py \
             test_quality_analytics.py \
-            test_contract.py \
-            test_contract_parity.py \
-            test_signals.py \
-            test_ui_parts_native.py \
-            test_channel_adapter.py \
-            test_web_egress.py \
-            test_whatsapp_egress.py \
             test_listing_leak.py; do
             echo "::group::$t"
             python "$t"

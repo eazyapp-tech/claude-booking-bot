@@ -3,7 +3,6 @@ import uuid
 
 from config import settings
 from core.log import get_logger
-from core.signals import record_signal
 from db.redis_store import get_property_info_map, get_account_values, track_funnel, get_user_phone, get_aadhar_user_name, get_user_memory, record_visit_scheduled, schedule_followup, get_user_brand, track_property_event
 from core.followup import create_followup_state
 from utils.api import user_error
@@ -154,8 +153,6 @@ async def save_visit_time(
                 "lead creation failed after booking success — user=%s eazypg_id=%s property=%s",
                 user_id, eazypg_id, prop_display,
             )
-            # Booking landed internally but CRM sync failed → honest partial receipt.
-            record_signal(booking_held=True, crm_synced=False)
             return (
                 f"We received your visit request for '{prop_display}' on {visit_date} at {visit_time}, "
                 f"but ran into a technical issue confirming it with the property team. "
@@ -163,7 +160,6 @@ async def save_visit_time(
                 f"We apologize for the inconvenience!"
             )
 
-    record_signal(booking_held=True, crm_synced=True)
     return (
         f"Visit scheduled successfully for '{prop_display}' "
         f"on {visit_date} at {visit_time} ({visit_type}).{location_info}"
