@@ -7,6 +7,7 @@ Assertions mirror Plan 3 Task 4 verbatim (pytest cases converted to the harness)
 
 Run: `python test_signals.py` (exit 0 = pass). No network/Redis/LLM.
 """
+import asyncio
 import os
 import sys
 
@@ -81,11 +82,30 @@ def section_zero_result_search_emits_empty_rail():
           repr(units))
 
 
+def section_signals_survive_asyncio_gather():
+    async def _tool_a():
+        record_signal(search_ran=True, result_count=0)
+    async def _tool_b():
+        record_signal(api_error=True)
+    async def _drive():
+        reset_signals()
+        await asyncio.gather(_tool_a(), _tool_b())   # child tasks, copied contexts
+        return current_signals()
+    result = asyncio.run(_drive())
+    check("gather: search_ran propagates from child task", result.get("search_ran") is True,
+          f"got {result}")
+    check("gather: result_count propagates from child task", result.get("result_count") == 0,
+          f"got {result}")
+    check("gather: api_error propagates from a sibling child task", result.get("api_error") is True,
+          f"got {result}")
+
+
 if __name__ == "__main__":
     section_reset_clears_the_slate()
     section_record_merges_not_replaces()
     section_current_signals_returns_a_copy()
     section_half_succeeded_write_emits_partial_receipt()
     section_zero_result_search_emits_empty_rail()
+    section_signals_survive_asyncio_gather()
     print(f"\n{'='*48}\n  {_passed} passed, {_failed} failed\n{'='*48}")
     sys.exit(1 if _failed else 0)
