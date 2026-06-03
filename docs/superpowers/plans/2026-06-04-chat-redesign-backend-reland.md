@@ -53,7 +53,7 @@
 ## Status Tracker (the durable checklist — keep current)
 
 - [x] **D1 — `_to_native` key alignment + cross-contract test.** Shipped commit `ca363c5`. quick_replies `replies`→`chips` (end-to-end), gallery `property_name`→`property`, status_card→`status_rail`, expandable→inline. `test_cross_contract.py` (35 assertions, proven to bite). Gate 22/22.
-- [ ] **D2 — Structured comparison emission.** Comparison renders as prose; emit a native `comparison` unit + broker-prompt nudge. (Detailed below.)
+- [x] **D2 — Structured comparison emission.** Shipped commit `3ac75ce`. `compare.py:build_comparison_items()` (pure) → `record_signal(comparison_items=...)`; `generate_ui_parts` emits the native `comparison` unit; `compare.md` nudged to short-recommendation-only. Cross-contract D2 section + adversarial no-signal guard. Gate 22/22.
 - [ ] **D3 — Rich detail sheet (spec §3.2).** Feed the sheet gallery/sharing/reviews/rules/honest-bit/commute so it stops looking thin. (Grounding-first.)
 - [ ] **D4 — Partial-success receipt.** Emit on real half-success writes. NOTE: must be `status_rail` warn, not `confirmation`/`partial` (live FE can't render partial). (Grounding-first.)
 - [ ] **D5 — Web human-handoff teammate identity.** Fix `core/pipeline.py:~59-63` returning `""` on the web channel. (Grounding-first.)
@@ -62,7 +62,7 @@
 
 ---
 
-## D2 — Structured Comparison Emission
+## D2 — Structured Comparison Emission — ✅ DONE (`3ac75ce`)
 
 **Problem:** `tools/broker/compare.py:compare_properties` builds a rich structured list (`comparison[]`, lines 129-147) then flattens it into a PROSE string and returns that to the LLM, which writes its own text breakdown → the FE renders text. The FE `comparison` renderer works (seeded-verified); it is just never fed structured data.
 
@@ -163,3 +163,4 @@ done
 - **2026-06-04 — D4 partial receipt CANNOT be `confirmation`/`partial`:** the live FE has no partial rendering; use `status_rail` warn. The handoff prose assumed otherwise — trust the FE code.
 - **2026-06-04 — Known live-FE bug (out of scope, FE frozen):** carousel media bridge passes `legacy.property` but `renderImageGallery` reads `part.property_name` → gallery header label always "Property" (thumbnails still render). Flag for a future FE fix.
 - **2026-06-04 — D2 data-flow decided:** `compare_properties` will `record_signal(comparison_items=items)`; `generate_ui_parts` emits the native `comparison` unit from the signal slate — same pattern as the empty/error/partial branches (`core/signals.py`).
+- **2026-06-04 — D2 shipped (`3ac75ce`):** wiring confirmed live (`pipeline.py:40` reset_signals; `chat.py:165/278` pass `signals=current_signals()` to both /chat and /chat/stream). `build_comparison_items` sets `best` on lowest rent (only with a real spread) + top match score, badges the top scorer "Best match", omits empty attrs. Kept returning the prose string to the LLM (it reasons over it) — no double-render because `generate_ui_parts` is supplements-only and `compare.md` now forbids re-typing the table. **NOT updated: the legacy monolithic compare prompt in `core/prompts.py`** (DYNAMIC_SKILLS_ENABLED=false fallback, off in prod) — if that flag is ever flipped, mirror the nudge there.
