@@ -74,22 +74,23 @@ def section_error_part_is_status_rail_error_not_empty():
     check("error_part: retry is True", u["data"].get("retry") is True, repr(u))
 
 
-def section_partial_success_is_confirmation_partial():
+def section_partial_success_is_status_rail_warn():
+    # The live FE has no partial rendering — a half-success is a status_rail WARN, not a
+    # confirmation card (which would draw phantom Confirm/Cancel on a committed action).
     units = generate_ui_parts(
         "Your bed is held, but we couldn't sync your details — our team will follow up.",
         agent="booking", user_id="u1", locale="en",
         signals={"booking_held": True, "crm_synced": False},
     )
     _all_valid("partial", units)
-    check("partial: has confirmation/partial unit",
-          any(u["kind"] == "confirmation" and u["state"] == "partial" for u in units), repr(units))
-    partial = next((u for u in units if u["kind"] == "confirmation" and u["state"] == "partial"), None)
-    pdata = (partial or {}).get("data", {})
-    check("partial: data carries honesty payload (ok+warn lists, body truthy)",
-          isinstance(pdata.get("ok"), list) and pdata.get("ok")
-          and isinstance(pdata.get("warn"), list) and pdata.get("warn")
-          and bool(pdata.get("body")),
-          repr(pdata))
+    check("partial: emits a status_rail unit (NOT a confirmation card)",
+          any(u["kind"] == "status_rail" for u in units)
+          and not any(u["kind"] == "confirmation" for u in units), repr(units))
+    rail = next((u for u in units if u["kind"] == "status_rail"), None)
+    rdata = (rail or {}).get("data", {})
+    check("partial: rail is variant warn with a title + caveat body",
+          rdata.get("variant") == "warn" and bool(rdata.get("title")) and bool(rdata.get("body")),
+          repr(rdata))
 
 
 def section_empty_listings_is_status_rail_empty_not_error():
@@ -115,7 +116,7 @@ def section_every_unit_validates_for_each_agent():
 if __name__ == "__main__":
     section_plain_text_is_supplements_only()
     section_error_part_is_status_rail_error_not_empty()
-    section_partial_success_is_confirmation_partial()
+    section_partial_success_is_status_rail_warn()
     section_empty_listings_is_status_rail_empty_not_error()
     section_every_unit_validates_for_each_agent()
     print(f"\n{'='*48}\n  {_passed} passed, {_failed} failed\n{'='*48}")

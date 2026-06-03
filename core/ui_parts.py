@@ -908,15 +908,20 @@ def generate_ui_parts(
     if signals.get("api_error"):
         return [make_error_part(signals.get("error_message") or response_text or "Something went wrong")]
 
-    # Partial success: action committed but a downstream step failed.
+    # Partial success: action committed but a downstream step failed. The live FE has NO
+    # partial rendering — renderConfirmationCard ignores state and always draws Confirm/Cancel
+    # (phantom buttons on an already-committed action) and never reads data.ok/warn. So emit a
+    # status_rail WARN instead (renderStatusRail: variant "warn" → rail--warn, title+body, no
+    # buttons). The body is a SHORT caveat, NOT response_text — parse_message_parts (web) /
+    # send_text (WhatsApp) own the body; re-emitting it here would double-render (supplements-only).
     if signals.get("booking_held") and signals.get("crm_synced") is False:
         return [make_unit(
-            "confirmation", "partial",
+            "status_rail", "partial",
             {
-                "title": "Bed held",
-                "ok": ["Your bed is held"],
-                "warn": ["We couldn't sync your details — our team will follow up"],
-                "body": response_text,
+                "variant": "warn",
+                "title": "We'll follow up to confirm",
+                "body": "Your request is saved, but a detail didn't sync. Our team will reach out shortly.",
+                "retry": False,
             },
         )]
 

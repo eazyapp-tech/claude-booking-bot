@@ -503,6 +503,46 @@ def section_detail_sheet_enriched_renders_gallery_and_sharing():
           _sheet_enrichment({"property_name": "Old"}) == {}, "non-empty enrichment from bare entry")
 
 
+def section_partial_receipt_is_status_rail_warn_not_confirmation():
+    """D4: a half-success (booking_held + crm_synced False) must emit a status_rail WARN.
+    The live FE has NO partial rendering — renderConfirmationCard ignores state and always
+    draws Confirm/Cancel, and it never reads data.ok/warn. So the OLD confirmation/partial
+    shape showed phantom buttons on a committed action and dropped the caveat."""
+    units = generate_ui_parts(
+        "Visit booked for Saturday 4pm — but we couldn't sync your details; our team will follow up.",
+        agent="booking", user_id="u1", locale="en",
+        signals={"booking_held": True, "crm_synced": False},
+    )
+    kinds = [u["kind"] for u in units]
+    rails = [u for u in units if u["kind"] == "status_rail"]
+    check("partial: emits a status_rail unit (NOT a confirmation card)",
+          len(rails) == 1 and "confirmation" not in kinds, repr(kinds))
+    if rails:
+        u = rails[0]
+        check("partial: variant is warn", u["data"].get("variant") == "warn", repr(u))
+        check("partial: valid unit (survives ingress)", is_valid_unit(u), repr(u))
+        check("partial: carries a non-empty title + body", bool(u["data"].get("title")) and bool(u["data"].get("body")), repr(u))
+        html = mirror_render(u)
+        check("partial: renders a warn rail (title+body) with NO confirm/cancel buttons",
+              bool(html) and html.startswith("rail[") and "Confirm" not in html and "Cancel" not in html,
+              repr(html))
+    # The body must be a SHORT caveat, NOT the full response_text (parse_message_parts owns
+    # the body on web — re-emitting it here double-renders; generate_ui_parts is supplements-only).
+    if rails:
+        check("partial: body is a caveat, not the echoed response_text (no double-render)",
+              "Saturday 4pm" not in (rails[0]["data"].get("body") or ""), repr(rails[0]["data"].get("body")))
+    # Adversarial: the OLD confirmation/partial shape forces phantom Confirm/Cancel on the
+    # live FE and drops the warn line (the FE never reads data.warn).
+    old = make_unit("confirmation", "partial",
+                    {"title": "Bed held", "ok": ["Your bed is held"],
+                     "warn": ["We couldn't sync your details — our team will follow up"], "body": "..."})
+    old_html = mirror_render(old)
+    check("partial: OLD confirmation/partial shows phantom Confirm/Cancel (the guard bites)",
+          bool(old_html) and "Confirm" in old_html and "Cancel" in old_html, repr(old_html))
+    check("partial: OLD shape drops the warn caveat (FE never reads data.warn)",
+          old_html and "couldn't sync" not in old_html, repr(old_html))
+
+
 def section_end_to_end_every_unit_renders_on_live_fe():
     """Drive the REAL generate_ui_parts path and prove every emitted unit renders."""
     for agent in ("default", "broker", "booking", "profile"):
@@ -531,6 +571,7 @@ if __name__ == "__main__":
     section_confirmation_ask_renders_with_its_cta()
     section_comparison_emits_structured_unit()
     section_detail_sheet_enriched_renders_gallery_and_sharing()
+    section_partial_receipt_is_status_rail_warn_not_confirmation()
     section_end_to_end_every_unit_renders_on_live_fe()
     print(f"\n{'='*52}\n  {_passed} passed, {_failed} failed\n{'='*52}")
     sys.exit(1 if _failed else 0)

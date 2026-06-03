@@ -67,8 +67,11 @@ def section_half_succeeded_write_emits_partial_receipt():
     record_signal(booking_held=True, crm_synced=False)
     units = generate_ui_parts("Visit booked for Saturday 4pm.", agent="booking",
                               user_id="u1", locale="en", signals=current_signals())
-    check("partial: emits confirmation/partial unit",
-          any(u["kind"] == "confirmation" and u["state"] == "partial" for u in units),
+    # Half-success → status_rail WARN (the live FE has no partial rendering; a confirmation
+    # card would draw phantom Confirm/Cancel on a committed action).
+    check("partial: emits a status_rail warn unit (not confirmation/partial)",
+          any(u["kind"] == "status_rail" and u["data"].get("variant") == "warn" for u in units)
+          and not any(u["kind"] == "confirmation" for u in units),
           repr(units))
 
 
