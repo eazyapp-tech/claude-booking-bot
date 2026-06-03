@@ -38,11 +38,31 @@ def _all_valid(prefix, units):
         check(f"{prefix}: unit[{i}] is valid", is_valid_unit(u), repr(u))
 
 
-def section_plain_text_emits_one_text_unit():
-    units = generate_ui_parts("Hello, how can I help?", agent="default", user_id="u1", locale="en")
+def section_plain_text_is_supplements_only():
+    # SUPPLEMENTS-ONLY invariant: generate_ui_parts never emits the response
+    # body — that is owned by parse_message_parts (web) / send_text (WhatsApp).
+    # Emitting it here too would double-render the bubble on web.
+    body = "Hello, how can I help?"
+    units = generate_ui_parts(body, agent="default", user_id="u1", locale="en")
     _all_valid("plain_text", units)
-    check("plain_text: has text/result unit",
-          any(u["kind"] == "text" and u["state"] == "result" for u in units), repr(units))
+
+    # Anti-duplication: NO unit may be a bare text/result body whose data == {"text": body}.
+    bare_body = [
+        u for u in units
+        if u["kind"] == "text" and u["state"] == "result" and u.get("data") == {"text": body}
+    ]
+    check("plain_text: no bare text/result body unit (no double-render)",
+          not bare_body, repr(bare_body))
+
+    # PRINCIPLE: no returned unit carries the FULL response body as data["text"].
+    carries_body = [u for u in units if u.get("data", {}).get("text") == body]
+    check("plain_text: no unit carries the full body as data['text']",
+          not carries_body, repr(carries_body))
+
+    # For agent="default", _default_chips always offers a search chip, so the
+    # only supplement here is a quick_replies unit (no body unit).
+    check("plain_text: emits the quick_replies supplement",
+          any(u["kind"] == "quick_replies" for u in units), repr(units))
 
 
 def section_error_part_is_status_rail_error_not_empty():
@@ -93,7 +113,7 @@ def section_every_unit_validates_for_each_agent():
 
 
 if __name__ == "__main__":
-    section_plain_text_emits_one_text_unit()
+    section_plain_text_is_supplements_only()
     section_error_part_is_status_rail_error_not_empty()
     section_partial_success_is_confirmation_partial()
     section_empty_listings_is_status_rail_empty_not_error()
