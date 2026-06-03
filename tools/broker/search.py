@@ -6,6 +6,7 @@ import httpx
 
 from config import settings
 from core.log import get_logger
+from core.signals import record_signal
 
 logger = get_logger("tools.search")
 from db.redis_store import (
@@ -25,7 +26,7 @@ from db.redis_store import (
     track_property_event,
     _r as _redis,
 )
-from utils.api import parse_amenities, parse_sharing_types
+from utils.api import parse_amenities, parse_sharing_types, parse_sharing_types_structured
 from utils.geo import geocode_address
 from utils.scoring import match_score as calc_match_score, gender_compatible
 
@@ -163,10 +164,12 @@ async def _call_search_api(payload: dict) -> list | None:
         return None
 
 
-async def _fetch_first_image(client: httpx.AsyncClient, pg_id: str, pg_number: str) -> str:
-    """Fetch the first image URL for a property. Returns '' on any failure."""
+async def _fetch_images(client: httpx.AsyncClient, pg_id: str, pg_number: str) -> list:
+    """Fetch ALL image URLs for a property (same call that backs the single cover —
+    the full list is already returned, we just stop discarding it so the detail sheet
+    can show a real gallery). Returns [] on any failure."""
     if not pg_id or not pg_number:
-        return ""
+        return []
     try:
         resp = await client.post(
             f"{settings.RENTOK_API_BASE_URL}/bookingBot/fetchPropertyImages",
@@ -175,16 +178,20 @@ async def _fetch_first_image(client: httpx.AsyncClient, pg_id: str, pg_number: s
         resp.raise_for_status()
         data = resp.json()
         images = data.get("images", data.get("data", []))
-        if images:
-            first = images[0]
-            return first.get("url", first.get("media_id", "")) if isinstance(first, dict) else str(first)
+        urls = []
+        for im in images:
+            url = im.get("url", im.get("media_id", "")) if isinstance(im, dict) else str(im)
+            if url:
+                urls.append(url)
+        return urls
     except Exception as e:
         logger.debug("image fetch failed for pg_id=%s: %s", pg_id, e)
-    return ""
+    return []
 
 
 async def _enrich_with_images(properties: list, limit: int = 5) -> None:
-    """Concurrently fetch first image for properties missing p_image. Mutates in place."""
+    """Concurrently fetch images for properties missing p_image. Mutates in place:
+    sets p_image (cover = first url) AND _images (full gallery list for the sheet)."""
     targets = []
     for i, p in enumerate(properties[:limit]):
         if not p.get("p_image") and not p.get("image"):
@@ -196,16 +203,17 @@ async def _enrich_with_images(properties: list, limit: int = 5) -> None:
 
     logger.info("image enrichment: fetching images for %d properties", len(targets))
     async with httpx.AsyncClient(timeout=8) as client:
-        tasks = [_fetch_first_image(client, pg_id, pg_num) for _, pg_id, pg_num in targets]
-        urls = await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = [_fetch_images(client, pg_id, pg_num) for _, pg_id, pg_num in targets]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
     enriched = 0
-    for (idx, _, _), url in zip(targets, urls):
-        if isinstance(url, Exception):
-            logger.warning("image fetch failed for property at idx %d: %s", idx, url)
+    for (idx, _, _), urls in zip(targets, results):
+        if isinstance(urls, Exception):
+            logger.warning("image fetch failed for property at idx %d: %s", idx, urls)
             continue
-        if url:
-            properties[idx]["p_image"] = url
+        if urls:
+            properties[idx]["p_image"] = urls[0]
+            properties[idx]["_images"] = urls
             enriched += 1
     logger.info("image enrichment: %d/%d images found", enriched, len(targets))
 
@@ -328,6 +336,7 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
         logger.info("after round 2 merge: %d total", len(properties))
 
     if not properties:
+        record_signal(search_ran=True, result_count=0)
         return "No properties are currently available in this region."
 
     logger.info("found %d properties", len(properties))
@@ -397,11 +406,16 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
             # the list with options the user cannot actually book.
             logger.info("gender filter removed ALL %d properties (pref=%s)",
                         removed, pg_available_for)
+            record_signal(search_ran=True, result_count=0)
             return (
                 f"I couldn't find any properties matching your requirement "
                 f"({pg_available_for}) in this area — the available options here "
                 f"are for a different gender. Want me to widen the search or try a nearby area?"
             )
+
+    # Final result set resolved (post-score, post gender hard-filter) — record
+    # the real count so egress can shape honest UI (scarcity only from truth).
+    record_signal(search_ran=True, result_count=len(properties))
 
     existing_map = get_property_info_map(user_id)
     # Build index for fast dedup by prop_id → position in existing_map
@@ -447,6 +461,11 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
         # no downstream tool needs to know the raw API shape.
         amenities_raw = parse_amenities(p.get("p_common_amenities", p.get("p_amenities", "")))
         sharing_types_data = parse_sharing_types(p.get("p_sharing_types_enabled", []))
+        # Structured sharing + full image list power the detail sheet (§3.2). The sheet
+        # needs an ARRAY of {label,price} (the display string above renders blank there)
+        # and the full gallery, not just the cover. Both come from data already fetched.
+        sharing_types_struct = parse_sharing_types_structured(p.get("p_sharing_types_enabled", []))
+        images_list = p.get("_images") or ([image] if image else [])
 
         info = {
             "property_name": property_name,
@@ -471,6 +490,8 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
             "property_min_token_amount": min_token,    # alias for payment tool
             "amenities": amenities_raw,
             "sharing_types": sharing_types_data,
+            "sharing_types_list": sharing_types_struct,  # structured for the detail sheet
+            "images": images_list,                       # full gallery for the detail sheet
         }
         # Replace old entry for same property (dedup) or append new
         if prop_id and prop_id in _existing_idx:

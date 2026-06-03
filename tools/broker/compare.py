@@ -6,8 +6,10 @@ Reduces comparison from 4+ LLM turns to 1 tool call + 1 response.
 """
 
 import asyncio
+import re
 
 from core.log import get_logger
+from core.signals import record_signal
 from db.redis_store import get_preferences, get_user_memory
 from tools.broker.property_details import _fetch_details_raw as _fetch_details
 from tools.broker.room_details import _fetch_rooms_raw as _fetch_rooms
@@ -15,6 +17,57 @@ from utils.properties import find_property as _find_property
 from utils.scoring import match_score as calc_match_score
 
 logger = get_logger("tools.compare")
+
+
+def _rent_value(raw):
+    """Parse a numeric rent for best-cell comparison; None when not parseable."""
+    if raw is None:
+        return None
+    m = re.search(r"\d[\d,]*", str(raw))
+    return float(m.group(0).replace(",", "")) if m else None
+
+
+def build_comparison_items(comparison: list[dict]) -> list[dict]:
+    """Map the structured comparison[] onto the frontend's native comparison contract:
+    items[] of {name, score, badge, attrs:[{label, value, best?}]}.
+
+    The FE's native items[] path does NOT auto-compute best cells (only its legacy
+    headers/rows path does), so best is set here — the lowest rent and the top match
+    score. The top scorer also gets a "Best match" badge. Empty attributes are omitted
+    so the card never shows blank rows; the renderer degrades on ragged attrs[].
+    """
+    if not comparison:
+        return []
+    top_name = max(comparison, key=lambda c: c.get("score", 0)).get("name")
+    rents = {c.get("name"): _rent_value(c.get("rent")) for c in comparison}
+    valid = [v for v in rents.values() if v is not None]
+    # Only declare a cheapest when there is a real spread (≥2 values, not all equal).
+    min_rent = min(valid) if len(valid) >= 2 and len(set(valid)) > 1 else None
+
+    items = []
+    for c in comparison:
+        name = c.get("name", "Property")
+        attrs = []
+        if c.get("rent") not in (None, "", "N/A"):
+            attrs.append({"label": "Rent", "value": f"₹{c['rent']}",
+                          "best": min_rent is not None and rents.get(name) == min_rent})
+        if c.get("location") and c["location"] != "N/A":
+            attrs.append({"label": "Location", "value": c["location"]})
+        attrs.append({"label": "Match", "value": f"{c.get('score', 0)}/100",
+                      "best": name == top_name})
+        if c.get("available_for"):
+            attrs.append({"label": "For", "value": c["available_for"]})
+        if c.get("distance"):
+            attrs.append({"label": "Distance", "value": f"{c['distance']}m"})
+        if c.get("amenities"):
+            attrs.append({"label": "Amenities", "value": c["amenities"]})
+        if c.get("token_amount"):
+            attrs.append({"label": "Token", "value": f"₹{c['token_amount']}"})
+        if c.get("total_beds"):
+            attrs.append({"label": "Beds available", "value": str(c["total_beds"])})
+        items.append({"name": name, "score": c.get("score", 0),
+                      "badge": "Best match" if name == top_name else "", "attrs": attrs})
+    return items
 
 TOOL_SCHEMA = {
     "name": "compare_properties",
@@ -145,6 +198,14 @@ async def compare_properties(
             "maps_link": maps_link,
             "microsite": microsite,
         })
+
+    # Record the structured comparison so the egress emits a native comparison unit
+    # (the FE renders the side-by-side / carousel table). The prose `output` below is
+    # still returned to the LLM so it can reason and write a short recommendation.
+    try:
+        record_signal(comparison_items=build_comparison_items(comparison))
+    except Exception as e:
+        logger.warning("comparison signal record failed: %s", e)
 
     # Build structured comparison output
     output = "PROPERTY COMPARISON\n" + "=" * 50 + "\n\n"

@@ -112,3 +112,30 @@ def parse_sharing_types(val, fallback: str = "") -> str:
                 parts.append(str(item))
         return ", ".join(parts) or fallback
     return str(val) or fallback
+
+
+def parse_sharing_types_structured(val) -> list:
+    """Structured form of parse_sharing_types for the detail sheet's 'Choose sharing'
+    section. The frontend (eazypg-chat property-sheet.js _sharingOptions) reads an
+    ARRAY of {label, price} — a flat display string (parse_sharing_types) fails its
+    Array.isArray check and renders nothing.
+
+    Accepts the RentOK list-of-dicts shape (same fields parse_sharing_types reads);
+    skips disabled entries. Returns [] for empty / string / unknown shapes so the
+    sheet section stays hidden (graceful degradation, no empty shell).
+    """
+    if not val or not isinstance(val, list):
+        return []
+    out = []
+    for item in val:
+        if isinstance(item, dict):
+            stype = item.get("sharing_type") or item.get("type") or item.get("name", "")
+            enabled = item.get("is_enabled", item.get("enabled", True))
+            if not stype or not enabled:
+                continue
+            rent = (item.get("rent") or item.get("starting_rent")
+                    or item.get("rent_starts_from", ""))
+            out.append({"label": str(stype), "price": f"₹{rent}/mo" if rent else ""})
+        elif item:
+            out.append({"label": str(item), "price": ""})
+    return out

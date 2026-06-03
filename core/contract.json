@@ -1,0 +1,26 @@
+{
+  "kinds": [
+    "text",
+    "carousel",
+    "choice_list",
+    "quick_replies",
+    "action_buttons",
+    "comparison",
+    "map",
+    "confirmation",
+    "status_rail",
+    "input_request"
+  ],
+  "states": [
+    "thinking",
+    "streaming",
+    "result",
+    "partial",
+    "awaiting_input",
+    "error",
+    "empty"
+  ],
+  "surfaces": ["inline", "sheet"],
+  "carousel_payloads": ["listing", "visit", "media"],
+  "status_variants": ["err", "warn", "ok"]
+}

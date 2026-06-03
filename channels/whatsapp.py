@@ -25,6 +25,7 @@ from db.redis_store import (
 from db.postgres import insert_message
 from db.redis_store import get_user_brand
 from utils.image import upload_media_from_url
+from core.channel_adapter import adapt, to_plain_text
 
 
 def _get_whatsapp_config(user_id: str) -> dict:
@@ -256,3 +257,151 @@ async def send_carousel(user_id: str, property_template: list) -> dict:
     clear_image_urls(user_id)
     clear_property_template(user_id)
     return result
+
+
+def units_to_wa_messages(units: list[dict]) -> list[dict]:
+    """Degrade native units for WhatsApp, then map to send-layer message dicts.
+
+    Message dicts: {"type": "text"|"list"|"buttons"|"media", ...}. The existing
+    send_text/send_carousel layer consumes these. text is always the floor.
+    """
+    degraded = adapt(units, "whatsapp")
+    messages: list[dict] = []
+    for u in degraded:
+        kind = u.get("kind")
+        d = u.get("data", {})
+        if kind == "text":
+            messages.append({"type": "text", "text": d.get("text", "")})
+        elif kind == "choice_list":
+            rows = [{"id": o.get("id", str(i)), "title": o.get("label", "")[:24],
+                     "description": (o.get("hint") or "")[:72]}
+                    for i, o in enumerate(d.get("options", [])[:10])]
+            # A real prompt body, not the generic "Pick one" send_units used to fall back to.
+            messages.append({"type": "list", "body": d.get("prompt") or d.get("title") or "Tap an option:", "rows": rows})
+        elif kind == "quick_replies":
+            buttons = [{"id": str(i), "title": str(r)[:20]}
+                       for i, r in enumerate(d.get("chips", [])[:3])]
+            messages.append({"type": "buttons", "body": d.get("prompt") or "Quick replies:", "buttons": buttons})
+        elif kind == "action_buttons":
+            raw = d.get("buttons", d.get("actions", []))[:3]
+            buttons = [{"id": str(i), "title": (b.get("label", "") if isinstance(b, dict) else str(b))[:20]}
+                       for i, b in enumerate(raw)]
+            messages.append({"type": "buttons", "body": d.get("prompt") or "Quick replies:", "buttons": buttons})
+        elif kind == "carousel" and d.get("payload") == "media":
+            for it in d.get("items", []):
+                messages.append({"type": "media", "url": it.get("url", ""),
+                                 "media_type": it.get("type", "image")})
+        else:
+            # any other kind already degraded to text by the adapter, but guard anyway
+            messages.append({"type": "text", "text": to_plain_text(u)})
+    return messages
+
+
+async def send_interactive_list(user_id: str, body: str, rows: list[dict],
+                                header: str = "", button: str = "Choose") -> dict:
+    """Send a WhatsApp interactive list (Meta type:interactive/list).
+
+    rows: [{"id", "title", "description"}] (title<=24, description<=72, <=10 rows).
+    Same body for Meta and Interakt — _get_whatsapp_config resolves the host.
+    """
+    config = _get_whatsapp_config(user_id)
+    recipient = user_id[:12]
+
+    interactive = {
+        "type": "list",
+        "body": {"text": body or " "},
+        "action": {
+            "button": button[:20],
+            "sections": [{"title": (header or "Options")[:24], "rows": rows[:10]}],
+        },
+    }
+    if header:
+        interactive["header"] = {"type": "text", "text": header[:60]}
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient,
+        "type": "interactive",
+        "interactive": interactive,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(config["url"], json=payload, headers=config["headers"])
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        logger.error("Error sending interactive list: %s", e)
+        return {"error": True, "message": str(e)}
+
+
+async def send_interactive_buttons(user_id: str, body: str, buttons: list[dict]) -> dict:
+    """Send WhatsApp reply buttons (Meta type:interactive/button).
+
+    buttons: [{"id", "title"}] (title<=20, <=3 buttons).
+    """
+    config = _get_whatsapp_config(user_id)
+    recipient = user_id[:12]
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": body or " "},
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": b.get("id", str(i)), "title": b.get("title", "")[:20]}}
+                    for i, b in enumerate(buttons[:3])
+                ]
+            },
+        },
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(config["url"], json=payload, headers=config["headers"])
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        logger.error("Error sending interactive buttons: %s", e)
+        return {"error": True, "message": str(e)}
+
+
+# The interactive supplements WhatsApp genuinely lacks (tappable replies / lists).
+# The drain path already sends the body text + property carousel + images, so only these
+# may be forwarded — text/status_rail/listing-carousel/media units would double-send.
+_WA_INTERACTIVE_KINDS = ("quick_replies", "action_buttons", "choice_list")
+
+
+def filter_interactive(units: list[dict]) -> list[dict]:
+    """Keep only the interactive supplements safe to forward on the live WhatsApp drain
+    path (where the body text, carousel and images are already sent). Honesty-branch turns
+    (which emit only a status_rail) forward nothing — no double-send of the body."""
+    return [u for u in units if u.get("kind") in _WA_INTERACTIVE_KINDS]
+
+
+async def send_units(user_id: str, units: list[dict]) -> None:
+    """Egress entry point: degrade native units → dispatch each on WhatsApp.
+
+    text → send_text · list → send_interactive_list · buttons → send_interactive_buttons
+    · media → upload_media_from_url + send_image. text is always the floor.
+    """
+    for m in units_to_wa_messages(units):
+        t = m.get("type")
+        if t == "text":
+            await send_text(user_id, m.get("text", ""))
+        elif t == "list":
+            await send_interactive_list(user_id, m.get("body") or "Tap an option:", m.get("rows", []))
+        elif t == "buttons":
+            await send_interactive_buttons(user_id, m.get("body") or "Quick replies:", m.get("buttons", []))
+        elif t == "media":
+            config = _get_whatsapp_config(user_id)
+            media_id = await upload_media_from_url(m.get("url", ""), config)
+            if media_id:
+                await send_image(user_id, media_id)
+            else:
+                await send_text(user_id, m.get("url", ""))

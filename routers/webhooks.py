@@ -20,7 +20,9 @@ from core.webhook_security import verify_whatsapp_signature, verify_payment_sign
 from core.log import get_logger
 from core.pipeline import run_pipeline
 from core.rate_limiter import check_rate_limit, RateLimitExceeded
-from channels.whatsapp import send_text, send_carousel, send_images
+from channels.whatsapp import send_text, send_carousel, send_images, send_units, filter_interactive
+from core.ui_parts import generate_ui_parts
+from core.signals import current_signals
 from db import postgres as pg
 from db.redis_store import (
     get_active_request,
@@ -126,6 +128,18 @@ async def _drain_and_process(user_phone: str) -> None:
                 images = get_property_images_id(user_phone)
                 if images:
                     await send_images(user_phone, images)
+
+                # Forward the interactive supplements WhatsApp otherwise lacks (tappable
+                # quick replies / lists). Filtered to interactive kinds so the body text,
+                # carousel and images already sent above are never duplicated (no double-send).
+                try:
+                    units = generate_ui_parts(response, agent_name, user_phone,
+                                              _lang or "en", signals=current_signals())
+                    interactive = filter_interactive(units)
+                    if interactive:
+                        await send_units(user_phone, interactive)
+                except Exception as e:
+                    logger.warning("WA interactive supplements failed for %s: %s", _tag_phone(user_phone), e)
 
             # If new messages arrived while we were processing, loop and drain again.
             # Set the cancellation signal BEFORE the next pipeline run so that the
