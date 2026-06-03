@@ -106,9 +106,50 @@ def section_media_carousel_becomes_one_media_per_item():
           bool(vids) and vids[0]["media_type"] == "video", repr(vids))
 
 
+def section_interactive_messages_carry_a_meaningful_body():
+    # D6: the interactive list/buttons must carry a real prompt body, not the generic
+    # "Pick one" / blank default that send_units falls back to.
+    ql = units_to_wa_messages([make_unit("quick_replies", "result", {"chips": ["Search PGs", "My visits"]})])
+    btns = [m for m in ql if m["type"] == "buttons"]
+    check("body: quick_replies buttons message carries a non-blank body",
+          bool(btns) and bool((btns[0].get("body") or "").strip()), repr(btns))
+    check("body: quick_replies body is not the generic 'Pick one'",
+          bool(btns) and btns[0].get("body") != "Pick one", repr(btns))
+    cl = units_to_wa_messages([make_unit("choice_list", "result",
+                                         {"prompt": "Which area?", "options": [{"label": "Kurla"}, {"label": "Powai"}]})])
+    lists = [m for m in cl if m["type"] == "list"]
+    check("body: choice_list list message uses its prompt as the body",
+          bool(lists) and lists[0].get("body") == "Which area?", repr(lists))
+
+
+def section_filter_interactive_keeps_only_tappable_kinds():
+    # D6: the drain path already sends the body text + property carousel + images, so only
+    # the interactive supplements WA lacks may be forwarded — everything else would double-send.
+    from channels.whatsapp import filter_interactive
+    units = [
+        make_unit("text", "result", {"text": "Here are some options"}),
+        make_unit("status_rail", "warn", {"variant": "warn", "title": "Heads up", "body": "x"}),
+        make_unit("carousel", "result", {"payload": "media", "items": [{"url": "a.jpg"}]}),
+        make_unit("comparison", "result", {"items": [{"name": "A"}, {"name": "B"}]}),
+        make_unit("quick_replies", "result", {"chips": ["a", "b"]}),
+        make_unit("action_buttons", "result", {"buttons": [{"label": "Book"}]}),
+        make_unit("choice_list", "result", {"options": [{"label": "Kurla"}]}),
+    ]
+    kept = filter_interactive(units)
+    kinds = sorted(u["kind"] for u in kept)
+    check("filter: keeps exactly the 3 interactive kinds",
+          kinds == ["action_buttons", "choice_list", "quick_replies"], repr(kinds))
+    check("filter: drops text/status_rail/carousel/comparison (already sent → no double-send)",
+          not any(u["kind"] in ("text", "status_rail", "carousel", "comparison") for u in kept), repr(kept))
+    check("filter: empty input → empty (honesty-branch turns forward nothing)",
+          filter_interactive([]) == [], "non-empty")
+
+
 def main():
     section_text_unit_becomes_one_text_message()
     section_listing_carousel_becomes_list_message_max_10()
+    section_interactive_messages_carry_a_meaningful_body()
+    section_filter_interactive_keeps_only_tappable_kinds()
     section_quick_replies_become_reply_buttons_max_3()
     section_action_buttons_become_reply_buttons_max_3()
     section_media_carousel_becomes_one_media_per_item()

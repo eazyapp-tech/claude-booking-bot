@@ -276,16 +276,17 @@ def units_to_wa_messages(units: list[dict]) -> list[dict]:
             rows = [{"id": o.get("id", str(i)), "title": o.get("label", "")[:24],
                      "description": (o.get("hint") or "")[:72]}
                     for i, o in enumerate(d.get("options", [])[:10])]
-            messages.append({"type": "list", "rows": rows})
+            # A real prompt body, not the generic "Pick one" send_units used to fall back to.
+            messages.append({"type": "list", "body": d.get("prompt") or d.get("title") or "Tap an option:", "rows": rows})
         elif kind == "quick_replies":
             buttons = [{"id": str(i), "title": str(r)[:20]}
                        for i, r in enumerate(d.get("chips", [])[:3])]
-            messages.append({"type": "buttons", "buttons": buttons})
+            messages.append({"type": "buttons", "body": d.get("prompt") or "Quick replies:", "buttons": buttons})
         elif kind == "action_buttons":
             raw = d.get("buttons", d.get("actions", []))[:3]
             buttons = [{"id": str(i), "title": (b.get("label", "") if isinstance(b, dict) else str(b))[:20]}
                        for i, b in enumerate(raw)]
-            messages.append({"type": "buttons", "buttons": buttons})
+            messages.append({"type": "buttons", "body": d.get("prompt") or "Quick replies:", "buttons": buttons})
         elif kind == "carousel" and d.get("payload") == "media":
             for it in d.get("items", []):
                 messages.append({"type": "media", "url": it.get("url", ""),
@@ -370,6 +371,19 @@ async def send_interactive_buttons(user_id: str, body: str, buttons: list[dict])
         return {"error": True, "message": str(e)}
 
 
+# The interactive supplements WhatsApp genuinely lacks (tappable replies / lists).
+# The drain path already sends the body text + property carousel + images, so only these
+# may be forwarded — text/status_rail/listing-carousel/media units would double-send.
+_WA_INTERACTIVE_KINDS = ("quick_replies", "action_buttons", "choice_list")
+
+
+def filter_interactive(units: list[dict]) -> list[dict]:
+    """Keep only the interactive supplements safe to forward on the live WhatsApp drain
+    path (where the body text, carousel and images are already sent). Honesty-branch turns
+    (which emit only a status_rail) forward nothing — no double-send of the body."""
+    return [u for u in units if u.get("kind") in _WA_INTERACTIVE_KINDS]
+
+
 async def send_units(user_id: str, units: list[dict]) -> None:
     """Egress entry point: degrade native units → dispatch each on WhatsApp.
 
@@ -381,9 +395,9 @@ async def send_units(user_id: str, units: list[dict]) -> None:
         if t == "text":
             await send_text(user_id, m.get("text", ""))
         elif t == "list":
-            await send_interactive_list(user_id, m.get("body", "Pick one"), m.get("rows", []))
+            await send_interactive_list(user_id, m.get("body") or "Tap an option:", m.get("rows", []))
         elif t == "buttons":
-            await send_interactive_buttons(user_id, m.get("body", " "), m.get("buttons", []))
+            await send_interactive_buttons(user_id, m.get("body") or "Quick replies:", m.get("buttons", []))
         elif t == "media":
             config = _get_whatsapp_config(user_id)
             media_id = await upload_media_from_url(m.get("url", ""), config)
