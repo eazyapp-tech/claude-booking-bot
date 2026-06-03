@@ -19,9 +19,11 @@ from pydantic import BaseModel
 import core.state as state
 from core.auth import verify_api_key
 from core.log import get_logger
+from core.channel_adapter import adapt
 from core.message_parser import parse_message_parts
 from core.pipeline import run_pipeline, _route_agent
 from core.rate_limiter import check_rate_limit
+from core.signals import current_signals, reset_signals
 from core.tenancy import resolve_web_brand
 from core.ui_parts import generate_ui_parts, make_error_part
 from db import postgres as pg
@@ -160,7 +162,10 @@ async def chat(req: ChatRequest):
 
     # Generate backend-controlled UI parts (chips, buttons)
     try:
-        ui_parts = generate_ui_parts(response, agent_name, req.user_id, language)
+        ui_parts = generate_ui_parts(response, agent_name, req.user_id, language,
+                                     signals=current_signals())
+        # explicit channel egress (passthrough on web; symmetric with the WhatsApp path)
+        ui_parts = adapt(ui_parts, "web")
         parts.extend(ui_parts)
     except Exception as e:
         logger.warning("generate_ui_parts failed: %s", e)
@@ -220,6 +225,8 @@ async def chat_stream(req: ChatRequest):
     clear_cancel_requested(req.user_id)
 
     async def event_generator():
+        # Clean slate for this turn's truth signals (read at egress to shape honest UI).
+        reset_signals()
         # Emit agent_start so frontend knows which agent is handling + locale
         yield f"event: agent_start\ndata: {json.dumps({'agent': agent_name, 'locale': language})}\n\n"
 
@@ -268,7 +275,10 @@ async def chat_stream(req: ChatRequest):
 
         # Generate backend-controlled UI parts (chips, buttons)
         try:
-            ui_parts = generate_ui_parts(full_text, agent_name, req.user_id, language)
+            ui_parts = generate_ui_parts(full_text, agent_name, req.user_id, language,
+                                         signals=current_signals())
+            # explicit channel egress (passthrough on web; symmetric with the WhatsApp path)
+            ui_parts = adapt(ui_parts, "web")
             parts.extend(ui_parts)
         except Exception as e:
             logger.warning("generate_ui_parts failed: %s", e)
