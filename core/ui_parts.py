@@ -932,6 +932,13 @@ def generate_ui_parts(
     parts: list[dict] = []
     legacy_types: list[str] = []
 
+    # ── Structured comparison (signal-driven) ──
+    # compare_properties records the FE-shaped items[] on the signal slate; emit it as
+    # a native comparison unit so the FE renders the table instead of the broker's prose.
+    cmp_items = signals.get("comparison_items")
+    if cmp_items:
+        parts.append(make_unit("comparison", "result", {"items": cmp_items}))
+
     # ── Rich cards (status card, image gallery) — before chips ──
     try:
         status = _generate_status_card(response_text, ctx, user_id, locale)

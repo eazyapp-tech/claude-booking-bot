@@ -150,6 +150,46 @@ def _m_input_request(unit, d):
     return f"input[{d.get('input_type','text')}]"
 
 
+def _to_comparison_model(d):
+    # comparison.js toComparisonModel: native data.items[] takes precedence; else
+    # legacy headers/rows transpose. attrs may be an array or a {label:value} object.
+    items = d.get("items")
+    if isinstance(items, list) and items:
+        out = []
+        for it in items:
+            attrs = it.get("attrs")
+            if isinstance(attrs, dict):
+                coerced = [{"label": k, "value": v, "best": False} for k, v in attrs.items()]
+            elif isinstance(attrs, list):
+                coerced = [{"label": a.get("label", ""), "value": a.get("value", ""),
+                            "best": bool(a.get("best"))} for a in attrs]
+            else:
+                coerced = []
+            out.append({"name": it.get("name", ""),
+                        "score": "" if it.get("score") is None else str(it.get("score")),
+                        "badge": it.get("badge", ""), "attrs": coerced})
+        return out
+    headers = d.get("headers") or d.get("columns") or []
+    rows = d.get("rows") or []
+    if len(headers) < 2 or len(rows) < 1:
+        return []
+    names = headers[1:]
+    return [{"name": n, "score": "", "badge": "",
+             "attrs": [{"label": r[0], "value": (r[c + 1] if c + 1 < len(r) else ""),
+                        "best": False} for r in rows]}
+            for c, n in enumerate(names)]
+
+
+def _m_comparison(unit, d):
+    # renderComparison: toComparisonModel(data); returns null when < 2 items.
+    items = _to_comparison_model(d)
+    if len(items) < 2:
+        return None
+    names = " ".join(i["name"] for i in items)
+    attrs = " ".join(f"{a['label']}={a['value']}" for i in items for a in i["attrs"])
+    return f"comparison[{names} | {attrs}]"
+
+
 def _m_text_fallback(unit, d):
     # server-parts.js _renderTextFallback: data.text || data.prompt || data.title.
     body = d.get("text") or d.get("prompt") or d.get("title") or ""
@@ -166,8 +206,7 @@ _KIND_MIRROR = {
     "choice_list": _m_choice_list,
     "map": _m_map,
     "input_request": _m_input_request,
-    "comparison": lambda u, d: ("comparison:" + " ".join(
-        i.get("name", "") for i in (d.get("items") or [])) ) if (d.get("items") or d.get("rows")) else None,
+    "comparison": _m_comparison,
 }
 
 
@@ -267,6 +306,58 @@ def section_confirmation_ask_renders_with_its_cta():
           bool(html) and "Yes, book it" in html, repr(html))
 
 
+def section_comparison_emits_structured_unit():
+    """D2: a compare turn must emit a native `comparison` unit, not prose text."""
+    from tools.broker.compare import build_comparison_items
+    comparison = [
+        {"name": "Sunrise PG", "location": "Kurla", "rent": "8000", "score": 82,
+         "amenities": "WiFi, AC", "food": "", "services": "", "type": "PG",
+         "available_for": "Boys", "notice_period": "", "agreement_period": "",
+         "token_amount": "2000", "distance": "500", "rooms": [], "total_beds": 4,
+         "maps_link": "", "microsite": ""},
+        {"name": "Moonlight PG", "location": "Kurla", "rent": "9500", "score": 74,
+         "amenities": "WiFi", "food": "", "services": "", "type": "PG",
+         "available_for": "Boys", "notice_period": "", "agreement_period": "",
+         "token_amount": "", "distance": "800", "rooms": [], "total_beds": 2,
+         "maps_link": "", "microsite": ""},
+    ]
+    items = build_comparison_items(comparison)
+    check("cmp: build_comparison_items returns one item per property",
+          len(items) == 2, repr(items))
+    check("cmp: each item carries name + score + non-empty attrs",
+          all(i.get("name") and i.get("score") is not None and i.get("attrs") for i in items),
+          repr(items))
+    top = [i["name"] for i in items if i.get("badge")]
+    check("cmp: the top-scoring property carries a badge", top == ["Sunrise PG"], repr(items))
+    rent_best = [i["name"] for i in items for a in i["attrs"]
+                 if a["label"] == "Rent" and a.get("best")]
+    check("cmp: the lowest-rent cell is flagged best", rent_best == ["Sunrise PG"], repr(rent_best))
+
+    # generate_ui_parts emits the comparison unit FROM the signal slate (the egress
+    # pattern). The renderer then renders it via the live-FE mirror.
+    units = generate_ui_parts("Sunrise PG is the better fit for your budget.",
+                              agent="broker", user_id="u1", locale="en",
+                              signals={"comparison_items": items})
+    cmp_units = [u for u in units if u["kind"] == "comparison"]
+    check("cmp: generate_ui_parts emits exactly one comparison unit",
+          len(cmp_units) == 1, repr([u["kind"] for u in units]))
+    if cmp_units:
+        u = cmp_units[0]
+        check("cmp: comparison unit is valid (survives ingress)", is_valid_unit(u), repr(u))
+        html = mirror_render(u)
+        check("cmp: renders non-empty (>=2 columns) on the live FE", bool(html), repr(html))
+        check("cmp: both property names survive to the FE",
+              html and "Sunrise PG" in html and "Moonlight PG" in html, repr(html))
+        check("cmp: match score survives", html and "82" in html, repr(html))
+    # Adversarial: no comparison_items signal → NO comparison unit (the OLD prose-only
+    # behaviour that rendered as text). Proves the unit is signal-driven, not guessed.
+    units2 = generate_ui_parts("Here is a breakdown of the two options...",
+                               agent="broker", user_id="u1", locale="en", signals={})
+    check("cmp: no signal → NO comparison unit (proves it is data-driven, not prose-parsed)",
+          not any(u["kind"] == "comparison" for u in units2),
+          repr([u["kind"] for u in units2]))
+
+
 def section_end_to_end_every_unit_renders_on_live_fe():
     """Drive the REAL generate_ui_parts path and prove every emitted unit renders."""
     for agent in ("default", "broker", "booking", "profile"):
@@ -293,6 +384,7 @@ if __name__ == "__main__":
     section_status_card_becomes_status_rail_not_confirmation()
     section_expandable_is_inline_text_not_sheet()
     section_confirmation_ask_renders_with_its_cta()
+    section_comparison_emits_structured_unit()
     section_end_to_end_every_unit_renders_on_live_fe()
     print(f"\n{'='*52}\n  {_passed} passed, {_failed} failed\n{'='*52}")
     sys.exit(1 if _failed else 0)
