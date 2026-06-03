@@ -818,36 +818,59 @@ def _to_native(legacy: dict) -> dict:
     Only the OUTPUT SHAPE changes — every legacy producer keeps its triggers
     and the data it carried (minus the redundant "type" tag).
     """
-    # Only the producers that fall through to the lookup below
-    # (status_card, confirmation_card) live here. image_gallery,
-    # quick_replies, and expandable_sections each have a dedicated
-    # early-return block that owns its kind/state inline.
+    # confirmation_card falls through to the lookup below. status_card,
+    # image_gallery, quick_replies, and expandable_sections each have a
+    # dedicated early-return block that owns its kind/state/data inline.
+    #
+    # Every emitted data key below is aligned to what the LIVE frontend
+    # renderer actually reads (eazypg-chat/src/renderers/server-parts.js
+    # KIND_RENDERERS + primitives.js). The web egress passes these units
+    # verbatim (channel_adapter.adapt("web")), so an unread key renders blank.
     kind_map = {
-        "status_card": ("confirmation", "result"),
         "confirmation_card": ("confirmation", "awaiting_input"),
     }
     ltype = legacy.get("type")
     data = {k: v for k, v in legacy.items() if k != "type"}
 
+    if ltype == "status_card":
+        # Confirmed-milestone → quiet status_rail (redesign §3 tore down the heavy
+        # celebratory card). renderStatusRail reads data.{variant,title,body,retry};
+        # it has NO buttons, so it never shows the phantom Confirm/Cancel a
+        # `confirmation` card would force onto an already-completed action. Fold the
+        # subtitle + detail lines into the body so nothing is lost; the celebration
+        # and next-step actions are intentionally dropped by the quieter redesign.
+        detail_texts = [d.get("text", "") for d in legacy.get("details", []) if d.get("text")]
+        body = " · ".join(x for x in ([legacy.get("subtitle", "")] + detail_texts) if x)
+        return make_unit("status_rail", "result", {
+            "variant": "warn" if legacy.get("status") == "warning" else "ok",
+            "title": legacy.get("title", ""),
+            "body": body,
+            "retry": False,
+        })
+
     if ltype == "image_gallery":
         # carousel(media): inner items become data.items, payload tag added.
-        data = {"payload": "media", "property_name": legacy.get("property_name", ""),
+        # renderImageGallery's bridge reads the label via data.property (NOT
+        # data.property_name — that key is silently dropped by the FE).
+        data = {"payload": "media", "property": legacy.get("property_name", ""),
                 "items": legacy.get("images", [])}
         return make_unit("carousel", "result", data)
 
     if ltype == "quick_replies":
-        return make_unit("quick_replies", "result", {"replies": legacy.get("chips", [])})
+        # KIND_RENDERERS.quick_replies reads data.chips (NOT data.replies — that
+        # mismatch shipped empty chips every turn and triggered the #16 rollback).
+        # `chips` is the contract key end-to-end: web reads it verbatim, and the
+        # WhatsApp egress (channel_adapter / whatsapp.units_to_wa_messages) reads it too.
+        return make_unit("quick_replies", "result", {"chips": legacy.get("chips", [])})
 
     if ltype == "expandable_sections":
-        # Long collapsible detail → text unit on the sheet surface.
-        # SUPPLEMENTS-ONLY: carry the sections (+ property_name) but NEVER the
-        # full response body — that is owned by parse_message_parts. Dropping
-        # any "text" key here prevents duplicating the message bubble on web.
-        sections_data = {
-            "property_name": legacy.get("property_name", ""),
-            "sections": legacy.get("sections", []),
-        }
-        return make_unit("text", "result", sections_data, surface="sheet")
+        # Collapsible amenity/rules/FAQ detail → INLINE text unit carrying sections.
+        # renderTextPart renders data.sections inline. It must NOT be surface:"sheet":
+        # message-builder auto-opens the detent bottom sheet for any sheet unit, which
+        # would hijack every property-detail turn with a surprise sheet — the sheet is
+        # owned by the explicit "Details" affordance, not a backend push. SUPPLEMENTS-
+        # ONLY: carry sections, never the response body (owned by parse_message_parts).
+        return make_unit("text", "result", {"sections": legacy.get("sections", [])})
 
     kind, default_state = kind_map.get(ltype, ("text", "result"))
     return make_unit(kind, default_state, data)

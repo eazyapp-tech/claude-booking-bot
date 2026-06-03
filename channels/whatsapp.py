@@ -279,7 +279,7 @@ def units_to_wa_messages(units: list[dict]) -> list[dict]:
             messages.append({"type": "list", "rows": rows})
         elif kind == "quick_replies":
             buttons = [{"id": str(i), "title": str(r)[:20]}
-                       for i, r in enumerate(d.get("replies", [])[:3])]
+                       for i, r in enumerate(d.get("chips", [])[:3])]
             messages.append({"type": "buttons", "buttons": buttons})
         elif kind == "action_buttons":
             raw = d.get("buttons", d.get("actions", []))[:3]

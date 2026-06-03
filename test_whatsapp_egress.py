@@ -51,7 +51,7 @@ def section_listing_carousel_becomes_list_message_max_10():
 
 
 def section_quick_replies_become_reply_buttons_max_3():
-    units = [make_unit("quick_replies", "result", {"replies": ["a", "b", "c", "d"]})]
+    units = [make_unit("quick_replies", "result", {"chips": ["a", "b", "c", "d"]})]
     msgs = units_to_wa_messages(units)
     btns = [m for m in msgs if m["type"] == "buttons"]
     check("quick_replies: produces a buttons message", bool(btns), repr(msgs))

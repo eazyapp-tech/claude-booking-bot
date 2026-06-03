@@ -52,12 +52,12 @@ def section_whatsapp_carousel_listing_becomes_list_rows_capped_at_10():
 
 
 def section_whatsapp_quick_replies_capped_at_3():
-    units = [make_unit("quick_replies", "result", {"replies": ["a", "b", "c", "d", "e"]})]
+    units = [make_unit("quick_replies", "result", {"chips": ["a", "b", "c", "d", "e"]})]
     out = adapt(units, "whatsapp")
     qr = [u for u in out if u["kind"] == "quick_replies"]
     check("wa_qr: quick_replies unit present", bool(qr), repr(out))
     if qr:
-        check("wa_qr: replies capped at 3", len(qr[0]["data"]["replies"]) <= 3, repr(qr[0]["data"]["replies"]))
+        check("wa_qr: chips capped at 3", len(qr[0]["data"]["chips"]) <= 3, repr(qr[0]["data"]["chips"]))
 
 
 def section_whatsapp_map_degrades_to_deeplink_text():
@@ -78,7 +78,7 @@ def section_status_rail_error_survives_as_prefixed_text_on_whatsapp():
 def section_plain_text_flattens_everything_to_text():
     units = [
         make_unit("carousel", "result", {"payload": "listing", "items": [{"name": "Maple"}, {"name": "Oak"}]}),
-        make_unit("quick_replies", "result", {"replies": ["Book", "More"]}),
+        make_unit("quick_replies", "result", {"chips": ["Book", "More"]}),
     ]
     out = adapt(units, "plain")
     check("plain: everything flattened to text units",

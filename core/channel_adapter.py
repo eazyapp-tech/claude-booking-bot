@@ -60,7 +60,7 @@ def to_plain_text(unit: dict[str, Any]) -> str:
         return "\n".join(f"{i}. {o.get('label', '')}" for i, o in enumerate(opts, 1))
 
     if kind == "quick_replies":
-        reps = d.get("replies", [])
+        reps = d.get("chips", [])
         return "Reply with: " + " / ".join(str(r) for r in reps) if reps else ""
 
     if kind == "action_buttons":
@@ -134,8 +134,8 @@ def _adapt_whatsapp(unit: dict[str, Any]) -> list[dict[str, Any]]:
         return [unit]
 
     if kind == "quick_replies":
-        reps = d.get("replies", [])[:_WA_BUTTON_MAX]
-        return [make_unit("quick_replies", unit.get("state", "result"), {"replies": reps})]
+        reps = d.get("chips", [])[:_WA_BUTTON_MAX]
+        return [make_unit("quick_replies", unit.get("state", "result"), {"chips": reps})]
 
     if kind == "action_buttons":
         btns = d.get("buttons", d.get("actions", []))[:_WA_BUTTON_MAX]
