@@ -558,15 +558,29 @@ LANGUAGE_NAMES = {
     "en": "English",
     "hi": "Hindi (हिन्दी)",
     "mr": "Marathi (मराठी)",
+    "hinglish": "Hindi in Roman/Latin script (Hinglish)",
 }
 
 LANGUAGE_DIRECTIVE = """
 LANGUAGE INSTRUCTION (MANDATORY):
 You MUST respond in {language_name}. The user is communicating in {language_name}.
 - All your conversational text, questions, and explanations must be in {language_name}.
+- Write in the DEVANAGARI script — the same script the user used. Do NOT romanize.
 - Property names, area names, and city names should remain in their original form (usually English).
 - Monetary values use ₹ symbol regardless of language.
-- If the user switches language mid-conversation, follow their lead.
+- If the user switches language or script mid-conversation, follow their lead.
+"""
+
+# Romanized Hindi (Hinglish): mirror the user's Roman/Latin SCRIPT — never reply
+# in Devanagari to a romanized message (the UAT P1 "not mirroring language" bug).
+HINGLISH_DIRECTIVE = """
+LANGUAGE INSTRUCTION (MANDATORY):
+The user is writing Hindi in ROMAN/LATIN script (Hinglish). MIRROR their script:
+- Reply in Hindi using ROMAN/LATIN letters only — e.g. "Aapke liye ye options hain 🙂".
+- Do NOT use Devanagari (हिन्दी) script. Romanized Hindi only.
+- Keep it natural and conversational, the way the user typed.
+- Property, area, and city names stay in English; monetary values use ₹.
+- If the user switches to English or to Devanagari, follow their lead.
 """
 
 
@@ -603,9 +617,12 @@ def format_prompt(
 
     # Build the language directive block
     lang_name = LANGUAGE_NAMES.get(language, "English")
-    if language == "en":
-        # For English, inject a minimal directive (don't clutter the prompt)
+    if language == "en" or language not in LANGUAGE_NAMES:
+        # English (or any unrecognized value) → no directive; default to English.
         directive = ""
+    elif language == "hinglish":
+        # Romanized Hindi → mirror the user's Roman/Latin script (never Devanagari).
+        directive = HINGLISH_DIRECTIVE
     else:
         directive = LANGUAGE_DIRECTIVE.replace("{language_name}", lang_name)
 

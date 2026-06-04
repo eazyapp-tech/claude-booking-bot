@@ -9,7 +9,7 @@ Romanized Hinglish is detected via a curated keyword set (requires 2+ matches).
 import re
 from typing import Literal
 
-Language = Literal["en", "hi", "mr"]
+Language = Literal["en", "hi", "mr", "hinglish"]
 
 # ── Marathi-specific keywords (common words that differ from Hindi) ──────────
 _MARATHI_KEYWORDS: set[str] = {
@@ -64,13 +64,18 @@ def detect_language(text: str) -> Language:
 
     Returns
     -------
-    "hi" – Hindi (Devanagari script, non-Marathi)
-    "mr" – Marathi (Devanagari script with Marathi markers)
-    "en" – English or undetected (default)
+    "hi"       – Hindi in Devanagari script (non-Marathi)
+    "mr"       – Marathi in Devanagari script (with Marathi markers)
+    "hinglish" – Hindi written in Roman/Latin script (romanized)
+    "en"       – English or undetected (default)
+
+    "hi" and "hinglish" are deliberately distinct so the response directive can
+    mirror the user's SCRIPT (Devanagari in → Devanagari out; romanized in →
+    romanized out), instead of replying in Devanagari to a romanized message.
 
     Detection priority:
     1. If ≥30% Devanagari characters → check Marathi markers → "mr" or "hi"
-    2. If ≥2 Romanized Hinglish keywords → "hi"
+    2. If ≥2 Romanized Hinglish keywords → "hinglish"
     3. Otherwise → "en"
     """
     if not text or not text.strip():
@@ -88,7 +93,7 @@ def detect_language(text: str) -> Language:
 
     # Step 2: Romanized Hinglish detection (requires 2+ keyword matches)
     if _count_hinglish_matches(cleaned) >= 2:
-        return "hi"
+        return "hinglish"
 
     # Step 3: Default to English
     return "en"
