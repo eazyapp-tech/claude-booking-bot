@@ -70,9 +70,14 @@ async def save_call_time(
     except Exception as e:
         return user_error(f"schedule your {visit_type.lower()}", e, logger=logger)
 
-    # Bug fix: 'and' was wrong — 200 + success:false would fall through silently.
-    # Now: any non-success body is treated as a failure regardless of HTTP status.
-    if not data.get("success"):
+    # /bookingBot/add-booking signals success via INNER status==200 with NO
+    # top-level `success` key — verified contract (the UAT P0 booking bug; see
+    # schedule_visit.py). Inner status 400 = dedup; inner 500 = real error.
+    inner_status = data.get("status") if isinstance(data, dict) else None
+    if inner_status in (400, "400"):
+        return "There is already a scheduled booking for this property or on the same date. Would you like to see your scheduled events?"
+    ok = data.get("success") is True or inner_status in (200, "200")
+    if not ok:
         msg = data.get("message", "unknown error")
         return f"Booking failed: {msg}. Please try again."
 

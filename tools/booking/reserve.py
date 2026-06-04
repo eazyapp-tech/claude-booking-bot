@@ -92,7 +92,10 @@ async def reserve_bed(user_id: str, property_name: str, **kwargs) -> str:
     except Exception as e:
         return user_error("reserve the bed", e, logger=logger)
 
-    if data.get("success"):
+    # reserveProperty (same /bookingBot/ family) may signal success via inner
+    # status==200 instead of a top-level `success` flag — accept either so a
+    # genuine reservation is never mis-reported (matches add-booking/shortlist).
+    if data.get("success") is True or data.get("status") in (200, "200"):
         record_signal(booking_held=True, crm_synced=True)
         brand_hash_val = get_user_brand(user_id)
         track_funnel(user_id, "booking_initiated", brand_hash=brand_hash_val)

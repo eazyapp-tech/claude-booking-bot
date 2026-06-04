@@ -44,6 +44,7 @@ jobs:
             test_contract_alignment.py \
             test_gender_filter.py \
             test_shortlist_contract.py \
+            test_booking_contract.py \
             test_admin_login.py \
             test_quality_analytics.py \
             test_listing_leak.py \

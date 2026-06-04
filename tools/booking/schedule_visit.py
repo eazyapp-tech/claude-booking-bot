@@ -91,9 +91,17 @@ async def save_visit_time(
     except Exception as e:
         return user_error("schedule your visit", e, logger=logger)
 
-    # Bug fix: 'and' was wrong — 200 + success:false would fall through silently.
-    # Now: any non-success body is treated as a failure regardless of HTTP status.
-    if not data.get("success"):
+    # /bookingBot/add-booking signals success via INNER status==200 (HTTP is 200)
+    # and carries NO top-level `success` key — verified contract. The old
+    # `not data.get("success")` reported failure on every genuine save (the UAT
+    # P0: bot said "booking failed" while Rentok persisted the booking → "already
+    # scheduled" on retry, and track_funnel("visit") below never fired). Inner
+    # status 400 = dedup (a booking already exists); inner 500 = real error.
+    inner_status = data.get("status") if isinstance(data, dict) else None
+    if inner_status in (400, "400"):
+        return "There is already a scheduled visit for this property or a visit on the same date. Would you like to see your scheduled visits?"
+    ok = data.get("success") is True or inner_status in (200, "200")
+    if not ok:
         msg = data.get("message", "unknown error")
         return f"Booking failed: {msg}. Please try again."
 
