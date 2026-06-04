@@ -30,7 +30,7 @@ from db.redis_store import (
 )
 from utils.api import parse_amenities, parse_sharing_types, parse_sharing_types_structured
 from utils.geo import geocode_address
-from utils.scoring import match_score as calc_match_score, gender_compatible
+from utils.scoring import match_score as calc_match_score, gender_compatible_listing
 
 
 SEARCH_CACHE_TTL = 900  # 15 minutes
@@ -463,11 +463,17 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
     # Gender is a HARD constraint — a renter physically cannot book an
     # opposite-gender-only PG. Unlike amenities (soft, ranked above), exclude
     # incompatible inventory rather than surfacing unbookable options ranked a
-    # few points lower. "Any"/co-living and unknown values stay (gender_compatible
-    # is permissive), so the predominantly "Any"-tagged stock is never over-filtered.
+    # few points lower. "Any"/co-living and unknown values stay permissive, so the
+    # predominantly "Any"-tagged stock is never over-filtered.
+    # NOTE: the structured p_pg_available_for tag is unreliable on this inventory —
+    # girls-only PGs (e.g. "... KURLA GIRL'S") are routinely tagged "Any" — so the
+    # filter also reads the deliberate GIRL'S/BOY'S gender label in the property
+    # NAME, which overrides the tag. Co-living "BOY'S/GIRL'S" names stay bookable.
     if pg_available_for:
         compatible = [p for p in properties
-                      if gender_compatible(pg_available_for, p.get("p_pg_available_for", ""))]
+                      if gender_compatible_listing(pg_available_for,
+                                                   p.get("p_pg_available_for", ""),
+                                                   p.get("p_pg_name", ""))]
         removed = len(properties) - len(compatible)
         if compatible:
             if removed:

@@ -83,7 +83,11 @@ def arun(coro):
 # 1. gender_compatible — pure predicate, substring-trap safe
 # --------------------------------------------------------------------------- #
 print("\n[1] gender_compatible — hard-constraint predicate")
-from utils.scoring import gender_compatible  # noqa: E402
+from utils.scoring import (  # noqa: E402
+    gender_compatible,
+    gender_compatible_listing,
+    name_gender_token,
+)
 
 # Compatible cases
 check("1a boys pref + boys prop", gender_compatible("All Boys", "All Boys"))
@@ -192,6 +196,72 @@ check("4a does NOT pad with unbookable girls-only PG",
       "Jyoti Sparkle" not in res4, res4)
 check("4b honest about gender mismatch",
       "different gender" in res4.lower() or "for a different gender" in res4.lower(), res4)
+
+
+# --------------------------------------------------------------------------- #
+# 6. name_gender_token + gender_compatible_listing — NAME overrides a bad tag
+#    Live-confirmed (2026-06-05): on OxOtel inventory, girls-only PGs like
+#    "Mass U Foria E 201 KURLA GIRL'S" / "NATASHA AVENUE GHATKOPAR GIRL'S" are
+#    tagged p_pg_available_for="Any", so the tag-only filter leaked them into a
+#    boys search. The deliberate GIRL'S/BOY'S name label is the reliable signal.
+# --------------------------------------------------------------------------- #
+print("\n[6] name_gender_token + listing predicate — name overrides unreliable tag")
+
+# name_gender_token — pure detection, word-boundary + possessive forms
+check("6a 'GIRL'S' name → female", name_gender_token("Mass U Foria E 201 KURLA GIRL'S") == "female")
+check("6b 'BOY'S' name → male", name_gender_token("ROHA VATIKA 1406 BOY'S KURLA") == "male")
+check("6c plain 'Girls' name → female", name_gender_token("Hill View Vikhroli B 603 Girls") == "female")
+check("6d co-living 'BOY'S/GIRL'S' → any", name_gender_token("Indrayani GHATKOPAR BOY'S/GIRL'S") == "any")
+check("6e no gender token → None", name_gender_token("Mass Metropolis A 1003 (NEW)") is None)
+# Substring traps must NOT misfire (no word boundary before the token)
+check("6f 'Cowboy' not detected as male", name_gender_token("Cowboy Residency") is None)
+check("6g 'Boyle Mansion' not detected as male", name_gender_token("Boyle Mansion") is None)
+check("6h empty name → None", name_gender_token("") is None)
+
+# gender_compatible_listing — the predicate search.py uses
+# The live bug: tag "Any" but name says GIRL'S → must EXCLUDE for a boys seeker.
+check("6i boys pref EXCLUDES 'GIRL'S'-named even when tag=Any",
+      not gender_compatible_listing("All Boys", "Any", "NATASHA AVENUE GHATKOPAR GIRL'S"))
+check("6j boys pref KEEPS 'BOY'S'-named with tag=Any",
+      gender_compatible_listing("All Boys", "Any", "ROHA VATIKA 1406 BOY'S KURLA"))
+check("6k girls pref EXCLUDES 'BOY'S'-named with tag=Any",
+      not gender_compatible_listing("All Girls", "Any", "PUNEET 1506 KURLA BOY'S"))
+check("6l girls pref KEEPS 'GIRL'S'-named with tag=Any",
+      gender_compatible_listing("All Girls", "Any", "Mass U Foria E 201 KURLA GIRL'S"))
+check("6m co-living 'BOY'S/GIRL'S' name kept for BOTH genders",
+      gender_compatible_listing("All Boys", "Any", "Indrayani BOY'S/GIRL'S")
+      and gender_compatible_listing("All Girls", "Any", "Indrayani BOY'S/GIRL'S"))
+check("6n no-token name falls back to tag (Any kept)",
+      gender_compatible_listing("All Boys", "Any", "Mass Metropolis B504"))
+check("6o no-token name falls back to tag (real opposite tag excluded)",
+      not gender_compatible_listing("All Boys", "All Girls", "Plain Residency"))
+check("6p no gender pref → name never excludes",
+      gender_compatible_listing("", "Any", "NATASHA AVENUE GHATKOPAR GIRL'S"))
+
+
+# --------------------------------------------------------------------------- #
+# 7. End-to-end through search — mis-tagged GIRL'S inventory excluded for boys
+# --------------------------------------------------------------------------- #
+print("\n[7] search excludes mis-tagged GIRL'S-named PGs from a boys search")
+_MISTAGGED_GIRLS = {"p_id": "10", "p_pg_name": "NATASHA AVENUE GHATKOPAR GIRL'S",
+                    "p_pg_available_for": "Any", "p_rent_starts_from": 9000, "p_pg_id": "pgm1"}
+_MISTAGGED_GIRLS2 = {"p_id": "11", "p_pg_name": "Mass U Foria E 201 KURLA GIRL'S",
+                     "p_pg_available_for": "Any", "p_rent_starts_from": 9500, "p_pg_id": "pgm2"}
+_NAMED_BOYS_ANY = {"p_id": "12", "p_pg_name": "ROHA VATIKA 1406 BOY'S KURLA",
+                   "p_pg_available_for": "Any", "p_rent_starts_from": 9200, "p_pg_id": "pgm3"}
+_COLIVING_NAME = {"p_id": "13", "p_pg_name": "Indrayani GHATKOPAR BOY'S/GIRL'S",
+                  "p_pg_available_for": "Any", "p_rent_starts_from": 8800, "p_pg_id": "pgm4"}
+
+_install_stubs([_MISTAGGED_GIRLS, _MISTAGGED_GIRLS2, _NAMED_BOYS_ANY, _COLIVING_NAME],
+               {"location": "Kurla, Mumbai", "pg_available_for": "All Boys",
+                "max_budget": 15000})
+res7 = arun(search.search_properties("u_boys_mistag"))
+check("7a 'NATASHA ... GIRL'S' (tag=Any) NOT shown to boys seeker",
+      "NATASHA AVENUE" not in res7, res7)
+check("7b 'Mass U Foria ... GIRL'S' (tag=Any) NOT shown to boys seeker",
+      "Mass U Foria" not in res7, res7)
+check("7c 'ROHA VATIKA ... BOY'S' (tag=Any) IS shown", "ROHA VATIKA" in res7, res7)
+check("7d co-living 'BOY'S/GIRL'S' IS shown", "Indrayani" in res7, res7)
 
 
 # --------------------------------------------------------------------------- #
