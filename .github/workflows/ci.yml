@@ -54,7 +54,8 @@ jobs:
             test_ui_parts_native.py \
             test_channel_adapter.py \
             test_web_egress.py \
-            test_whatsapp_egress.py; do
+            test_whatsapp_egress.py \
+            test_presentation_polish.py; do
             echo "::group::$t"
             python "$t"
             echo "::endgroup::"
