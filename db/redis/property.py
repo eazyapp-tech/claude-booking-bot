@@ -71,6 +71,34 @@ def clear_property_template(user_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Ranked search carousel + paging cursor (native show-more pagination)
+# ---------------------------------------------------------------------------
+
+def set_search_carousel(user_id: str, items: list[dict], map_center: Optional[dict]) -> None:
+    """Cache the FULL ranked native carousel items (+ map_center) for the last search and
+    reset the paging cursor to 5 (the top-5 are already shown by the fresh-search carousel).
+    show_more_properties() pages the next batch from here — native, no prose scraping."""
+    _json_set(f"{user_id}:search_carousel", {"items": items, "map_center": map_center}, ex=PROPERTY_INFO_TTL)
+    set_carousel_cursor(user_id, 5)
+
+
+def get_search_carousel(user_id: str) -> dict:
+    return _json_get(f"{user_id}:search_carousel", default={})
+
+
+def get_carousel_cursor(user_id: str) -> int:
+    v = _json_get(f"{user_id}:carousel_cursor", default=5)
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        return 5
+
+
+def set_carousel_cursor(user_id: str, n: int) -> None:
+    _json_set(f"{user_id}:carousel_cursor", int(n), ex=PROPERTY_INFO_TTL)
+
+
+# ---------------------------------------------------------------------------
 # Property images
 # ---------------------------------------------------------------------------
 

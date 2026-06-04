@@ -17,6 +17,7 @@ from db.redis_store import (
     set_property_id_for_search,
     set_last_search_results,
     save_property_template,
+    set_search_carousel,
     get_whitelabel_pg_ids,
     save_preferences as redis_save_preferences,
     track_funnel,
@@ -587,9 +588,13 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
     # carousel unit that SUPERSEDES the regex-scraped one (stripped in chat.py). Built
     # from the same top-5 property_template WhatsApp shows; byte-compatible with the FE
     # card + detail sheet, but sourced from structured data instead of the broker's prose.
-    _carousel_items, _carousel_center = build_carousel_items(property_template, lat, lng, limit=5)
-    if _carousel_items:
-        record_signal(carousel_items=_carousel_items, carousel_map_center=_carousel_center)
+    # Build the full ranked carousel once: top-5 go on the signal (this turn's native
+    # carousel); the full list (up to 15) is cached so show_more_properties can page the
+    # next batch NATIVELY (no prose scraping). Caching resets the paging cursor to 5.
+    _full_items, _carousel_center = build_carousel_items(property_template, lat, lng, limit=15)
+    if _full_items:
+        record_signal(carousel_items=_full_items[:5], carousel_map_center=_carousel_center)
+    set_search_carousel(user_id, _full_items, _carousel_center)
 
     # Save pg_ids for KB doc injection in broker agent (uses brand-config pg_id, not Rentok UUID)
     kb_ids = [info["pg_id"] for info in property_template[:5] if info.get("pg_id")]

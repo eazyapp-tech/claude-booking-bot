@@ -61,7 +61,8 @@ jobs:
             test_whatsapp_egress.py \
             test_presentation_polish.py \
             test_contract_fixtures.py \
-            test_carousel_contract.py; do
+            test_carousel_contract.py \
+            test_show_more_native.py; do
             echo "::group::$t"
             python "$t"
             echo "::endgroup::"

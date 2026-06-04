@@ -191,6 +191,7 @@ search.set_property_info_map = lambda uid, m: _captured.update(map=m)
 search.set_property_id_for_search = lambda uid, ids: None
 search.set_last_search_results = lambda uid, r: None
 search.save_property_template = lambda uid, t: None
+search.set_search_carousel = lambda uid, items, center: None
 search.track_funnel = lambda *a, **k: None
 search.get_user_brand = lambda uid: "brandhash00"
 search.record_property_viewed = lambda *a, **k: None
