@@ -8,6 +8,7 @@ Supports:
 - Deal-breaker penalties from cross-session user memory
 """
 
+import re
 from typing import Optional
 
 
@@ -102,6 +103,59 @@ def gender_compatible(pref_gender: str, prop_gender: str) -> bool:
     if pref == "any" or prop == "any":
         return True
     return pref == prop
+
+
+# Strong gender labels managers embed in the free-text property NAME. Word-boundary
+# matched (\b) so substrings never misfire: "cowboy"/"boyle"/"highgirls" carry no
+# boundary before the token and are NOT detected. `girls?`/`boys?` also catch the
+# possessive forms ("GIRL'S"/"BOY'S") because the apostrophe is a non-word char,
+# so a boundary sits right after "girl"/"boy".
+_NAME_FEMALE_RE = re.compile(r"\b(?:girls?|ladies|lady)\b")
+_NAME_MALE_RE = re.compile(r"\b(?:boys?|gents?)\b")
+
+
+def name_gender_token(name: str) -> Optional[str]:
+    """Detect a deliberate gender label inside a property NAME.
+
+    Returns 'male' | 'female' | 'any' (BOTH tokens → co-living) | None (no signal).
+
+    Managers encode gender in the free-text name (e.g. "... KURLA GIRL'S") while the
+    structured `pg_available_for` field is frequently left at the default "Any" — so
+    for this inventory the name is a stronger gender signal than the tag.
+    """
+    s = (name or "").lower()
+    if not s:
+        return None
+    has_female = bool(_NAME_FEMALE_RE.search(s))
+    has_male = bool(_NAME_MALE_RE.search(s))
+    if has_female and has_male:
+        return "any"
+    if has_female:
+        return "female"
+    if has_male:
+        return "male"
+    return None
+
+
+def gender_compatible_listing(pref_gender: str, prop_gender: str, prop_name: str = "") -> bool:
+    """Listing-aware gender compatibility — the predicate search.py actually uses.
+
+    Same hard-constraint rule as gender_compatible(), but it also honours a gender
+    label embedded in the property NAME. Because the structured tag is unreliable on
+    this inventory (girls-only PGs are routinely tagged "Any"/blank), a single-gender
+    NAME overrides the tag. A name carrying BOTH tokens (co-living "BOY'S/GIRL'S")
+    stays bookable by anyone; a name with no gender token falls back to the structured
+    tag (unchanged gender_compatible() behaviour).
+    """
+    pref = _gender_token(pref_gender)
+    if pref is None or pref == "any":
+        return True
+    name_sig = name_gender_token(prop_name)
+    if name_sig == "any":
+        return True
+    if name_sig is not None:
+        return pref == name_sig
+    return gender_compatible(pref_gender, prop_gender)
 
 
 def match_score(
