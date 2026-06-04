@@ -1,0 +1,400 @@
+{
+  "_generated_by": "dump_contract_fixtures.py",
+  "units": [
+    {
+      "label": "text/result",
+      "unit": {
+        "kind": "text",
+        "state": "result",
+        "data": {
+          "text": "Here are some options for you."
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "text/result+sections",
+      "unit": {
+        "kind": "text",
+        "state": "result",
+        "data": {
+          "sections": [
+            {
+              "id": "am",
+              "title": "Amenities",
+              "content_type": "pills",
+              "items": [
+                "WiFi",
+                "AC"
+              ]
+            }
+          ]
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "carousel/result/listing",
+      "unit": {
+        "kind": "carousel",
+        "state": "result",
+        "data": {
+          "payload": "listing",
+          "items": [
+            {
+              "name": "Sunrise PG",
+              "rent": "8000",
+              "location": "Kurla"
+            },
+            {
+              "name": "Moon PG",
+              "rent": "9500",
+              "location": "Powai"
+            }
+          ]
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "carousel/result/media",
+      "unit": {
+        "kind": "carousel",
+        "state": "result",
+        "data": {
+          "payload": "media",
+          "property": "Sunrise PG",
+          "items": [
+            {
+              "url": "a.jpg"
+            },
+            {
+              "url": "b.jpg"
+            }
+          ]
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "quick_replies/result",
+      "unit": {
+        "kind": "quick_replies",
+        "state": "result",
+        "data": {
+          "chips": [
+            {
+              "label": "Search PGs",
+              "action": "show pgs"
+            }
+          ]
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "action_buttons/result",
+      "unit": {
+        "kind": "action_buttons",
+        "state": "result",
+        "data": {
+          "buttons": [
+            {
+              "label": "Book now",
+              "action": "book",
+              "style": "primary"
+            }
+          ]
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "comparison/result",
+      "unit": {
+        "kind": "comparison",
+        "state": "result",
+        "data": {
+          "items": [
+            {
+              "name": "Sunrise PG",
+              "score": 82,
+              "badge": "Best match",
+              "attrs": [
+                {
+                  "label": "Rent",
+                  "value": "₹8000",
+                  "best": true
+                },
+                {
+                  "label": "Location",
+                  "value": "Kurla"
+                },
+                {
+                  "label": "Match",
+                  "value": "82/100",
+                  "best": true
+                },
+                {
+                  "label": "For",
+                  "value": "Boys"
+                },
+                {
+                  "label": "Distance",
+                  "value": "500m"
+                },
+                {
+                  "label": "Amenities",
+                  "value": "WiFi"
+                },
+                {
+                  "label": "Token",
+                  "value": "₹2000"
+                },
+                {
+                  "label": "Beds available",
+                  "value": "4"
+                }
+              ]
+            },
+            {
+              "name": "Moon PG",
+              "score": 74,
+              "badge": "",
+              "attrs": [
+                {
+                  "label": "Rent",
+                  "value": "₹9500",
+                  "best": false
+                },
+                {
+                  "label": "Location",
+                  "value": "Kurla"
+                },
+                {
+                  "label": "Match",
+                  "value": "74/100",
+                  "best": false
+                },
+                {
+                  "label": "For",
+                  "value": "Boys"
+                },
+                {
+                  "label": "Distance",
+                  "value": "800m"
+                },
+                {
+                  "label": "Amenities",
+                  "value": "WiFi"
+                },
+                {
+                  "label": "Beds available",
+                  "value": "2"
+                }
+              ]
+            }
+          ]
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "status_rail/result/ok",
+      "unit": {
+        "kind": "status_rail",
+        "state": "result",
+        "data": {
+          "variant": "ok",
+          "title": "Visit Confirmed!",
+          "body": "Sunrise PG · Tomorrow 5 PM",
+          "retry": false
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "status_rail/result/warn",
+      "unit": {
+        "kind": "status_rail",
+        "state": "result",
+        "data": {
+          "variant": "warn",
+          "title": "Heads up",
+          "body": "Limited beds",
+          "retry": false
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "status_rail/empty/warn",
+      "unit": {
+        "kind": "status_rail",
+        "state": "empty",
+        "data": {
+          "variant": "warn",
+          "title": "No matches in that area yet.",
+          "retry": false
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "status_rail/error/err",
+      "unit": {
+        "kind": "status_rail",
+        "state": "error",
+        "data": {
+          "variant": "err",
+          "title": "Listings service is down",
+          "message": "We're having trouble right now. This usually resolves in a moment.",
+          "retry": true
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "status_rail/partial/warn",
+      "unit": {
+        "kind": "status_rail",
+        "state": "partial",
+        "data": {
+          "variant": "warn",
+          "title": "We'll follow up to confirm",
+          "body": "Your request is saved, but a detail didn't sync. Our team will reach out shortly.",
+          "retry": false
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "status_rail/handoff/ok",
+      "unit": {
+        "kind": "status_rail",
+        "state": "result",
+        "data": {
+          "variant": "ok",
+          "title": "You're chatting with OxOtel now",
+          "body": "A teammate has joined and will reply here shortly.",
+          "retry": false
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "confirmation/awaiting_input",
+      "unit": {
+        "kind": "confirmation",
+        "state": "awaiting_input",
+        "data": {
+          "title": "Confirm your visit?",
+          "subtitle": "Sunrise PG",
+          "confirm_action": "Yes, book it",
+          "cancel_action": "Not now",
+          "details": [
+            {
+              "text": "Tomorrow 5 PM"
+            }
+          ]
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "map/result",
+      "unit": {
+        "kind": "map",
+        "state": "result",
+        "data": {
+          "pins": [
+            {
+              "name": "Sunrise",
+              "lat": 19.07,
+              "lng": 72.88
+            }
+          ]
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "choice_list/result",
+      "unit": {
+        "kind": "choice_list",
+        "state": "result",
+        "data": {
+          "options": [
+            {
+              "id": "1",
+              "label": "Sunrise PG",
+              "sub": "Kurla"
+            },
+            {
+              "id": "2",
+              "label": "Moon PG",
+              "sub": "Powai"
+            }
+          ]
+        },
+        "surface": "inline"
+      }
+    },
+    {
+      "label": "input_request/awaiting_input",
+      "unit": {
+        "kind": "input_request",
+        "state": "awaiting_input",
+        "data": {
+          "input_type": "date",
+          "prompt": "Pick a visit date"
+        },
+        "surface": "inline"
+      }
+    }
+  ],
+  "sheet_items": [
+    {
+      "label": "rich",
+      "item": {
+        "name": "Sunrise PG",
+        "location": "Kurla",
+        "rent": "8000",
+        "images": [
+          "a.jpg",
+          "b.jpg",
+          "c.jpg"
+        ],
+        "sharing": [
+          {
+            "label": "Double sharing",
+            "price": ""
+          },
+          {
+            "label": "Triple sharing",
+            "price": ""
+          }
+        ],
+        "amenities": "WiFi, AC, Power Backup",
+        "lat": "19.07",
+        "lng": "72.88"
+      }
+    },
+    {
+      "label": "thin",
+      "item": {
+        "name": "Sunrise PG",
+        "rent": "8000",
+        "image": "a.jpg",
+        "amenities": "WiFi"
+      }
+    },
+    {
+      "label": "minimal",
+      "item": {
+        "name": "Sunrise PG",
+        "rent": "8000"
+      }
+    }
+  ]
+}
