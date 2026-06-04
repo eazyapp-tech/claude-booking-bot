@@ -448,17 +448,45 @@ class AnthropicEngine:
 
     @staticmethod
     def _clean_json(text: str) -> str:
-        """Extract JSON from text that may have markdown fences or extra text."""
+        """Extract a JSON object from text that may have markdown fences,
+        surrounding prose, nested objects, or single quotes.
+
+        Robustness matters: the supervisor's reply is Haiku output, and any
+        recovery failure here burns a retry and can drop routing to `default`
+        (the UAT `classify attempt N failed` log spam). Improvements over the
+        old ``\\{[^{}]*\\}`` regex: (1) extract the first BRACE-BALANCED object
+        so nested objects and trailing prose are handled; (2) tolerate
+        single-quoted JSON as a last resort.
+        """
+        import json as _json
         import re
         # Strip markdown code fences (```json ... ``` or ``` ... ```)
         text = re.sub(r"```(?:json)?\s*", "", text)
-        text = re.sub(r"```", "", text)
-        text = text.strip()
-        # If still not starting with {, find the first JSON object
-        if not text.startswith("{"):
-            match = re.search(r"\{[^{}]*\}", text)
-            if match:
-                text = match.group(0)
+        text = re.sub(r"```", "", text).strip()
+        # Extract the first brace-balanced {...} object (drops surrounding prose
+        # and trailing text; handles nested objects the flat regex could not).
+        start = text.find("{")
+        if start != -1:
+            depth = 0
+            for i in range(start, len(text)):
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        text = text[start:i + 1]
+                        break
+        # Tolerate single-quoted JSON (a common Haiku slip) — only if the
+        # double-quoted form doesn't already parse, so valid JSON is untouched.
+        try:
+            _json.loads(text)
+        except Exception:
+            swapped = text.replace("'", '"')
+            try:
+                _json.loads(swapped)
+                text = swapped
+            except Exception:
+                pass
         return text
 
     @staticmethod

@@ -76,7 +76,10 @@ def delete_active_request(user_id: str) -> None:
 # Last active agent tracking (10-min TTL for multi-turn continuations)
 # ---------------------------------------------------------------------------
 
-def set_last_agent(user_id: str, agent_name: str, ttl: int = 600) -> None:
+def set_last_agent(user_id: str, agent_name: str, ttl: int = 3600) -> None:
+    # 1h (was 600s): the 10-min window expired between turns when a user paused,
+    # losing routing stickiness mid-conversation and leaving the admin view
+    # showing "default" for every recent conversation (UAT artifact).
     _r().set(f"{user_id}:last_agent", agent_name, ex=ttl)
 
 
