@@ -39,6 +39,7 @@ _AGENT_TOOLS: dict[str, list[str]] = {
         "fetch_nearby_places",
         "fetch_room_details",
         "fetch_properties_by_query",
+        "show_more_properties",
         "compare_properties",
         "web_search",
     ],
@@ -107,6 +108,7 @@ def init_registry() -> None:
     from tools.broker.nearby_places import fetch_nearby_places, TOOL_SCHEMA as _nearby_schema
     from tools.broker.room_details import fetch_room_details, TOOL_SCHEMA as _rooms_schema
     from tools.broker.query_properties import fetch_properties_by_query, TOOL_SCHEMA as _query_schema
+    from tools.broker.show_more import show_more_properties, TOOL_SCHEMA as _show_more_schema
     from tools.broker.compare import compare_properties, TOOL_SCHEMA as _compare_schema
 
     # -- common --
@@ -152,6 +154,7 @@ def init_registry() -> None:
     register_tool("fetch_nearby_places",       _nearby_schema,           fetch_nearby_places)
     register_tool("fetch_room_details",        _rooms_schema,            fetch_room_details)
     register_tool("fetch_properties_by_query", _query_schema,            fetch_properties_by_query)
+    register_tool("show_more_properties",      _show_more_schema,        show_more_properties)
     register_tool("compare_properties",        _compare_schema,          compare_properties)
     register_tool("web_search",                _websearch_schema,        web_search)
     register_tool("save_phone_number",         _phone_schema,            save_phone_number)

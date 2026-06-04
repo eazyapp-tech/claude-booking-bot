@@ -27,7 +27,7 @@ SKILL_TOOLS: dict[str, list[str]] = {
     "compare":           ["compare_properties", "fetch_landmarks", "fetch_nearby_places"],
     "commute":           ["estimate_commute", "fetch_landmarks"],
     "shortlist":         ["shortlist_property"],
-    "show_more":         ["search_properties", "fetch_properties_by_query"],
+    "show_more":         ["search_properties", "fetch_properties_by_query", "show_more_properties"],
     "selling":           ["fetch_nearby_places", "estimate_commute", "fetch_room_details", "web_search"],
     "web_search":        ["web_search", "fetch_nearby_places"],
     "learning":          ["save_preferences"],  # For deal_breakers update
