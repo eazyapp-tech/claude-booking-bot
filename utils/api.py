@@ -135,7 +135,22 @@ def parse_sharing_types_structured(val) -> list:
                 continue
             rent = (item.get("rent") or item.get("starting_rent")
                     or item.get("rent_starts_from", ""))
-            out.append({"label": str(stype), "price": f"₹{rent}/mo" if rent else ""})
+            out.append({"label": _humanize_sharing(stype), "price": f"₹{rent}/mo" if rent else ""})
         elif item:
-            out.append({"label": str(item), "price": ""})
+            out.append({"label": _humanize_sharing(item), "price": ""})
     return out
+
+
+# RentOK ships sharing as a bare occupancy count ("1"/"2"/"3"); a user must never see "3".
+_SHARING_LABELS = {"1": "Single", "2": "Double sharing", "3": "Triple sharing"}
+
+
+def _humanize_sharing(stype) -> str:
+    """Map a sharing type to a human label. Numeric counts → words / "N-sharing";
+    an already-human label (e.g. "Double") passes through unchanged."""
+    s = str(stype).strip()
+    if s in _SHARING_LABELS:
+        return _SHARING_LABELS[s]
+    if s.isdigit():
+        return f"{s}-sharing"
+    return s

@@ -796,21 +796,32 @@ def make_error_part(
     return make_unit("status_rail", "error", data)
 
 
-def make_human_handoff_part(brand_name: str = "") -> dict:
+# Localized human-handoff copy (en/hi/mr) — the product is tri-lingual, so the takeover
+# acknowledgement must match the user's language. {who} = brand name (or "our team").
+_HANDOFF_COPY = {
+    "en": ("You're chatting with {who} now", "A teammate has joined and will reply here shortly."),
+    "hi": ("अब आप {who} की टीम से जुड़ गए हैं", "हमारी टीम का सदस्य जल्द ही यहाँ जवाब देगा।"),
+    "mr": ("आता तुम्ही {who} च्या टीमशी जोडले गेले आहात", "आमच्या टीमचा सदस्य लवकरच इथे उत्तर देईल."),
+}
+
+
+def make_human_handoff_part(brand_name: str = "", locale: str = "en") -> dict:
     """Native status_rail acknowledging a human teammate has taken over (WEB channel only).
 
     Replaces the silent '' the web human-mode path used to return: instead of dead air,
-    the user sees who is now helping. variant "ok" (a calm system note, no buttons).
-    WhatsApp intentionally stays silent on takeover — the admin's replies push directly
-    via channels.whatsapp.send_text, so a per-message bot note there would be redundant.
+    the user sees who is now helping, in their own language. variant "ok" (a calm system
+    note, no buttons). WhatsApp intentionally stays silent on takeover — the admin's
+    replies push directly via channels.whatsapp.send_text, so a per-message bot note
+    there would be redundant.
     """
     who = brand_name.strip() if brand_name and brand_name.strip() else "our team"
+    title_tpl, body = _HANDOFF_COPY.get(locale, _HANDOFF_COPY["en"])
     return make_unit(
         "status_rail", "result",
         {
             "variant": "ok",
-            "title": f"You're chatting with {who} now",
-            "body": "A teammate has joined and will reply here shortly.",
+            "title": title_tpl.format(who=who),
+            "body": body,
             "retry": False,
         },
     )
