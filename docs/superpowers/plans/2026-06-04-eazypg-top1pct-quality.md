@@ -43,10 +43,10 @@
 
 ## Status Tracker
 
-- [ ] **P1 — Presentation polish (backend, low-risk, high visible value).** Human sharing labels ("2"→"Double sharing"), amenity-string hygiene in compare, i18n the human-handoff strings.
-- [ ] **P2 — FE reload durability (frontend).** Persist `parts[]` in chat history so a reload restores rich cards/comparison instead of prose.
-- [ ] **P3 — Real-renderer tests (infra; de-risks P4).** Run the ACTUAL FE renderers (node + jsdom or module import) against backend output, replacing the hand-maintained Python mirror as the authority. Grounding-first.
-- [ ] **P4 — One contract end-to-end (the big one).** Emit the property carousel as a structured `carousel` unit from the search tool output; retire `message_parser`'s regex prose-parser and the legacy `{type}` parts. Grounding-first; gated behind P3.
+- [x] **P1 — Presentation polish.** ✅ SHIPPED (backend `a956f14`, PR #19) — `_humanize_sharing` ("3"→"Triple sharing") + i18n handoff en/hi/mr; P1.2 dropped (source-data). Sheet live-verified; gate 23/23.
+- [x] **P2 — FE reload durability.** ✅ SHIPPED (eazypg-chat `40e5955`, PR #6) — persist `serverParts`, replay on restore. Live-verified: search→reload→5 cards (no prose). FE suite 214/214.
+- [x] **P3 — Real-renderer tests.** ✅ SHIPPED (backend `0f5091a` PR #20 + eazypg-chat `78870ce` PR #7) — `contract_fixtures.json` (real emitter output, every kind×state) drift-guarded in backend CI (24 suites) + run through the REAL FE renderers (`backend-fixtures.test.js`, FE 237/237). Retires the Python FE-mirror as authority. Zero runtime change.
+- [ ] **P4 — One contract end-to-end (the big one).** Emit the property carousel as a structured `carousel` unit from the search tool output; retire `message_parser`'s regex prose-parser and the legacy `{type}` parts. **NOT cleanly flaggable — atomic switch; flip-and-validate-live + revert-ready. Do as a dedicated focused pass.** Grounding-first.
 - [ ] **P5 — Local bring-up (DX).** docker-compose (Redis+Postgres) + a mock-LLM mode so the full stack runs and smoke-tests in one command. Grounding-first.
 
 ---
