@@ -64,14 +64,10 @@ def parse_message_parts(markdown: str, user_id: str) -> list[dict]:
     if not markdown or not markdown.strip():
         return [{"type": "text", "markdown": markdown or ""}]
 
-    # 1. Comparison table (pipe-delimited lines ≥ 3)
-    pipe_lines = [l for l in markdown.split("\n") if re.search(r"\|.*\|", l)]
-    if len(pipe_lines) >= 3:
-        parts = _parse_comparison_segments(markdown)
-        if parts:
-            return parts
+    # Comparison is emitted natively (D2 signal → generate_ui_parts); the legacy
+    # pipe-table prose-scraper was removed. A markdown table now renders as text.
 
-    # 2. Compact property format: **N. Name**\n📍 ...
+    # 1. Compact property format: **N. Name**\n📍 ...
     compact_matches = list(re.finditer(
         r"\*\*(\d+)\.\s+(.+?)\*\*\s*\n(📍.+)", markdown
     ))
@@ -114,83 +110,6 @@ def parse_message_parts(markdown: str, user_id: str) -> list[dict]:
     # 6. Default — single text part (strip any raw media URLs the broker leaked
     #    into prose when it drifted off every listing format).
     return [{"type": "text", "markdown": _strip_raw_media_urls(markdown)}]
-
-
-# ------------------------------------------------------------------
-# Comparison table helpers
-# ------------------------------------------------------------------
-
-def _parse_comparison_segments(text: str) -> list[dict]:
-    """Split text into alternating text / table segments."""
-    lines = text.split("\n")
-    segments = []
-    buf, table_buf, in_table = [], [], False
-
-    for line in lines:
-        if re.search(r"\|.*\|", line):
-            if not in_table and buf:
-                segments.append(("text", "\n".join(buf)))
-                buf = []
-            in_table = True
-            table_buf.append(line)
-        else:
-            if in_table:
-                if len(table_buf) >= 3:
-                    segments.append(("table", table_buf))
-                else:
-                    buf.extend(table_buf)
-                table_buf = []
-                in_table = False
-            buf.append(line)
-
-    if in_table and len(table_buf) >= 3:
-        segments.append(("table", table_buf))
-    elif table_buf:
-        buf.extend(table_buf)
-    if buf:
-        segments.append(("text", "\n".join(buf)))
-
-    parts = []
-    for seg_type, content in segments:
-        if seg_type == "table":
-            parts.append(_table_segment_to_part(content))
-        else:
-            stripped = content.strip() if isinstance(content, str) else content
-            if stripped:
-                parts.append({"type": "text", "markdown": stripped})
-    return parts
-
-
-def _table_segment_to_part(lines: list[str]) -> dict:
-    """Convert pipe-table lines into a comparison_table part."""
-    # Filter out separator lines (---|---|---)
-    data_lines = [l for l in lines if not re.match(r"^\s*\|?\s*[-:]+\s*[\|-]", l)]
-    if len(data_lines) < 2:
-        return {"type": "text", "markdown": "\n".join(lines)}
-
-    def parse_row(line):
-        return [c.strip() for c in line.split("|") if c.strip()]
-
-    headers = parse_row(data_lines[0])
-    rows = [parse_row(l) for l in data_lines[1:]]
-
-    # Detect winner row
-    winner_re = re.compile(r"🏆|best pick|pick:|recommended", re.IGNORECASE)
-    winner = None
-    body_rows = []
-    for r in rows:
-        joined = " ".join(r)
-        if winner_re.search(joined):
-            winner = re.sub(r"🏆|best pick:|pick:", "", joined, flags=re.IGNORECASE).strip()
-        else:
-            body_rows.append(r)
-
-    return {
-        "type": "comparison_table",
-        "headers": headers,
-        "rows": body_rows,
-        "winner": winner,
-    }
 
 
 # ------------------------------------------------------------------
