@@ -187,11 +187,30 @@ def t_early_return_keeps_scraped():
                                           "data": {"payload": "media", "items": []}, "surface": "inline"}]), True)
 
 
+def t_comparison_scraper_removed():
+    """The legacy comparison_table prose-scraper is GONE. A markdown pipe-table is no longer
+    turned into a {type:comparison_table} (D2's native comparison is the only comparison path);
+    it renders as plain markdown text instead (the FE renders the table via marked). Deleting
+    the scraper also removes a latent double-render (scraped table + native comparison)."""
+    import core.message_parser as mp
+    from core.message_parser import parse_message_parts
+    md = ("Here's how they stack up:\n\n"
+          "| Feature | Sunrise | Moon |\n|---|---|---|\n| Rent | 8000 | 9000 |\n| WiFi | Yes | No |\n\n"
+          "Sunrise is the better value.")
+    parts = parse_message_parts(md, "u_cmp")
+    types = [p.get("type") for p in parts]
+    ck("no legacy comparison_table from a pipe-table", not any(t == "comparison_table" for t in types), types)
+    ck("pipe-table falls back to text part(s)", any(t == "text" for t in types), types)
+    ck("_parse_comparison_segments deleted (dead code removed)", not hasattr(mp, "_parse_comparison_segments"), "still present")
+    ck("_table_segment_to_part deleted (dead code removed)", not hasattr(mp, "_table_segment_to_part"), "still present")
+
+
 if __name__ == "__main__":
     print("== build_carousel_items field map =="); t_item_field_map()
     print("== limit / formatting / fallbacks =="); t_limit_format_and_graceful_fallbacks()
     print("== native unit emission =="); t_native_unit_emission()
     print("== supersession guard =="); t_supersession_guard()
     print("== early-return keeps scraped (no strip-without-replace) =="); t_early_return_keeps_scraped()
+    print("== comparison scraper removed =="); t_comparison_scraper_removed()
     print(f"\n{_p} passed, {_f} failed")
     sys.exit(1 if _f else 0)
