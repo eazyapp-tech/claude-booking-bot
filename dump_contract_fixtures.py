@@ -13,8 +13,28 @@ from core.ui_parts import (  # noqa: E402
     _to_native, make_error_part, make_empty_part, make_human_handoff_part,
 )
 from tools.broker.compare import build_comparison_items  # noqa: E402
+from tools.broker.search import build_carousel_items  # noqa: E402
 
 FIXTURES_PATH = os.path.join(os.path.dirname(__file__), "contract_fixtures.json")
+
+# Representative `info` dicts (the set_property_info_map payload search.py builds), so the
+# listing carousel + its detail-sheet item come from the REAL P4 emitter (build_carousel_items),
+# never hand-typed — the FE real-renderer test then covers the actual field map and the drift
+# guard bites if it changes. First entry is sheet-rich (gallery + structured sharing).
+_LISTING_INFOS = [
+    {"property_name": "Sunrise PG", "property_location": "Kurla", "property_rent": "8000",
+     "pg_available_for": "Boys", "property_image": "https://img/sunrise.webp",
+     "property_link": "https://micro/sunrise", "property_lat": "19.07", "property_long": "72.88",
+     "match_score": 82, "distance": "0.5 km", "amenities": "WiFi, AC, Power Backup",
+     "images": ["a.jpg", "b.jpg", "c.jpg"],
+     "sharing_types_list": [{"label": "Double sharing", "price": "₹8000/mo"},
+                            {"label": "Triple sharing", "price": "₹7000/mo"}]},
+    {"property_name": "Moon PG", "property_location": "Powai", "property_rent": "9500",
+     "pg_available_for": "Boys", "property_image": "https://img/moon.webp",
+     "property_link": "https://micro/moon", "property_lat": "19.12", "property_long": "72.91",
+     "match_score": 74, "distance": "0.8 km", "amenities": "WiFi"},
+]
+_CAR_ITEMS, _CAR_CENTER = build_carousel_items(_LISTING_INFOS, 19.07, 72.88, limit=5)
 
 _CMP_INPUT = [
     {"name": "Sunrise PG", "location": "Kurla", "rent": "8000", "score": 82, "amenities": "WiFi",
@@ -34,9 +54,8 @@ def build_fixtures() -> dict:
         ("text/result", _to_native({"type": "text", "text": "Here are some options for you."})),
         ("text/result+sections", _to_native({"type": "expandable_sections", "sections": [
             {"id": "am", "title": "Amenities", "content_type": "pills", "items": ["WiFi", "AC"]}]})),
-        ("carousel/result/listing", make_unit("carousel", "result", {"payload": "listing", "items": [
-            {"name": "Sunrise PG", "rent": "8000", "location": "Kurla"},
-            {"name": "Moon PG", "rent": "9500", "location": "Powai"}]})),
+        ("carousel/result/listing", make_unit("carousel", "result",
+            {"payload": "listing", "items": _CAR_ITEMS, "map_center": _CAR_CENTER})),
         ("carousel/result/media", _to_native({"type": "image_gallery", "property_name": "Sunrise PG",
             "images": [{"url": "a.jpg"}, {"url": "b.jpg"}]})),
         ("quick_replies/result", _to_native({"type": "quick_replies",
@@ -65,11 +84,10 @@ def build_fixtures() -> dict:
             "input_type": "date", "prompt": "Pick a visit date"})),
     ]
     # Detail-sheet carousel items (composePropertySheet) — rich / thin / minimal.
+    # "rich" IS the real P4 carousel item the FE stashes (build_carousel_items output),
+    # proving the round-trip search-info → carousel item → detail sheet (gallery + sharing).
     sheet_items = [
-        ("rich", {"name": "Sunrise PG", "location": "Kurla", "rent": "8000",
-                  "images": ["a.jpg", "b.jpg", "c.jpg"],
-                  "sharing": [{"label": "Double sharing", "price": ""}, {"label": "Triple sharing", "price": ""}],
-                  "amenities": "WiFi, AC, Power Backup", "lat": "19.07", "lng": "72.88"}),
+        ("rich", _CAR_ITEMS[0]),
         ("thin", {"name": "Sunrise PG", "rent": "8000", "image": "a.jpg", "amenities": "WiFi"}),
         ("minimal", {"name": "Sunrise PG", "rent": "8000"}),
     ]

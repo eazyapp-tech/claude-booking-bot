@@ -42,6 +42,18 @@ def _strip_raw_media_urls(md: str) -> str:
     return md.strip()
 
 
+def drop_scraped_carousel(parts: list[dict], has_native_carousel: bool) -> list[dict]:
+    """P4 supersession rule: when a structured (native) property carousel is emitted
+    for this turn (search ran → carousel_items on the signal), drop the regex-scraped
+    `property_carousel` part so exactly ONE carousel renders — structured supersedes
+    scraped. When no native carousel is emitted (e.g. a same-search 'show more' turn
+    with no fresh search signal), the scraped carousel is the sole source and is kept.
+    Surrounding text/comparison parts are always preserved."""
+    if not has_native_carousel:
+        return parts
+    return [p for p in parts if p.get("type") != "property_carousel"]
+
+
 def parse_message_parts(markdown: str, user_id: str) -> list[dict]:
     """Parse agent markdown into structured parts[].
 

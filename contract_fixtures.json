@@ -43,15 +43,50 @@
           "items": [
             {
               "name": "Sunrise PG",
-              "rent": "8000",
-              "location": "Kurla"
+              "location": "Kurla",
+              "rent": "₹8,000/mo",
+              "gender": "Boys",
+              "distance": "0.5 km",
+              "image": "https://img/sunrise.webp",
+              "link": "https://micro/sunrise",
+              "lat": "19.07",
+              "lng": "72.88",
+              "score": "82",
+              "amenities": "WiFi, AC, Power Backup",
+              "images": [
+                "a.jpg",
+                "b.jpg",
+                "c.jpg"
+              ],
+              "sharing": [
+                {
+                  "label": "Double sharing",
+                  "price": "₹8000/mo"
+                },
+                {
+                  "label": "Triple sharing",
+                  "price": "₹7000/mo"
+                }
+              ]
             },
             {
               "name": "Moon PG",
-              "rent": "9500",
-              "location": "Powai"
+              "location": "Powai",
+              "rent": "₹9,500/mo",
+              "gender": "Boys",
+              "distance": "0.8 km",
+              "image": "https://img/moon.webp",
+              "link": "https://micro/moon",
+              "lat": "19.12",
+              "lng": "72.91",
+              "score": "74",
+              "amenities": "WiFi"
             }
-          ]
+          ],
+          "map_center": {
+            "lat": 19.07,
+            "lng": 72.88
+          }
         },
         "surface": "inline"
       }
@@ -359,7 +394,15 @@
       "item": {
         "name": "Sunrise PG",
         "location": "Kurla",
-        "rent": "8000",
+        "rent": "₹8,000/mo",
+        "gender": "Boys",
+        "distance": "0.5 km",
+        "image": "https://img/sunrise.webp",
+        "link": "https://micro/sunrise",
+        "lat": "19.07",
+        "lng": "72.88",
+        "score": "82",
+        "amenities": "WiFi, AC, Power Backup",
         "images": [
           "a.jpg",
           "b.jpg",
@@ -368,16 +411,13 @@
         "sharing": [
           {
             "label": "Double sharing",
-            "price": ""
+            "price": "₹8000/mo"
           },
           {
             "label": "Triple sharing",
-            "price": ""
+            "price": "₹7000/mo"
           }
-        ],
-        "amenities": "WiFi, AC, Power Backup",
-        "lat": "19.07",
-        "lng": "72.88"
+        ]
       }
     },
     {

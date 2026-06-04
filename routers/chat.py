@@ -20,12 +20,12 @@ import core.state as state
 from core.auth import verify_api_key
 from core.log import get_logger
 from core.channel_adapter import adapt
-from core.message_parser import parse_message_parts
+from core.message_parser import parse_message_parts, drop_scraped_carousel
 from core.pipeline import run_pipeline, _route_agent
 from core.rate_limiter import check_rate_limit
 from core.signals import current_signals, reset_signals
 from core.tenancy import resolve_web_brand
-from core.ui_parts import generate_ui_parts, make_error_part, make_human_handoff_part
+from core.ui_parts import generate_ui_parts, make_error_part, make_human_handoff_part, has_native_listing_carousel
 from db import postgres as pg
 from db.redis_store import (
     set_account_values,
@@ -157,22 +157,29 @@ async def chat(req: ChatRequest):
         brand_hash=_chat_bh,
     )
 
-    # Parse structured parts for frontend rendering
+    # Generate backend-controlled UI parts FIRST (native carousel from the search signal,
+    # chips, buttons) so the supersession below can gate on whether a native carousel was
+    # ACTUALLY emitted — an honesty early-return (api_error/empty/partial) can suppress it
+    # even when a search ran, and we must never strip the scraped carousel without a replacement.
+    sig = current_signals()
+    ui_parts: list[dict] = []
+    try:
+        # explicit channel egress (passthrough on web; symmetric with the WhatsApp path)
+        ui_parts = adapt(generate_ui_parts(response, agent_name, req.user_id, language, signals=sig), "web")
+    except Exception as e:
+        logger.warning("generate_ui_parts failed: %s", e)
+
+    # Parse structured parts; P4: the native carousel supersedes the regex-scraped one —
+    # drop the scraped one ONLY when a native carousel is actually present (else keep it,
+    # e.g. a same-search "show more" turn renders cards via the legacy scrape path).
     try:
         parts = parse_message_parts(response, req.user_id)
+        parts = drop_scraped_carousel(parts, has_native_carousel=has_native_listing_carousel(ui_parts))
     except Exception as e:
         logger.warning("parse_message_parts failed: %s", e)
         parts = [{"type": "text", "markdown": response}]
 
-    # Generate backend-controlled UI parts (chips, buttons)
-    try:
-        ui_parts = generate_ui_parts(response, agent_name, req.user_id, language,
-                                     signals=current_signals())
-        # explicit channel egress (passthrough on web; symmetric with the WhatsApp path)
-        ui_parts = adapt(ui_parts, "web")
-        parts.extend(ui_parts)
-    except Exception as e:
-        logger.warning("generate_ui_parts failed: %s", e)
+    parts.extend(ui_parts)
 
     return ChatResponse(response=response, agent=agent_name, parts=parts, locale=language)
 
@@ -273,22 +280,25 @@ async def chat_stream(req: ChatRequest):
             await pg.insert_message(thread_id=req.user_id, user_phone=req.user_id, message_text=full_text, message_sent_by=2, platform_type="api", is_template=False, pg_ids=pg_ids_list, brand_hash=stream_brand_hash)
             return
 
-        # Parse structured parts for frontend rendering
+        # Generate UI parts FIRST so the supersession gates on actual emission (an honesty
+        # early-return can suppress the native carousel even when a search ran — never strip
+        # the scraped carousel without a native replacement). See the non-stream path above.
+        sig = current_signals()
+        ui_parts: list[dict] = []
+        try:
+            ui_parts = adapt(generate_ui_parts(full_text, agent_name, req.user_id, language, signals=sig), "web")
+        except Exception as e:
+            logger.warning("generate_ui_parts failed: %s", e)
+
+        # Parse structured parts; drop the scraped carousel only when a native one is present.
         try:
             parts = parse_message_parts(full_text, req.user_id)
+            parts = drop_scraped_carousel(parts, has_native_carousel=has_native_listing_carousel(ui_parts))
         except Exception as e:
             logger.warning("parse_message_parts failed: %s", e)
             parts = [{"type": "text", "markdown": full_text}]
 
-        # Generate backend-controlled UI parts (chips, buttons)
-        try:
-            ui_parts = generate_ui_parts(full_text, agent_name, req.user_id, language,
-                                         signals=current_signals())
-            # explicit channel egress (passthrough on web; symmetric with the WhatsApp path)
-            ui_parts = adapt(ui_parts, "web")
-            parts.extend(ui_parts)
-        except Exception as e:
-            logger.warning("generate_ui_parts failed: %s", e)
+        parts.extend(ui_parts)
 
         # Emit final done event with the full assembled response + parts + locale
         yield f"event: done\ndata: {json.dumps({'agent': agent_name, 'full_response': full_text, 'parts': parts, 'locale': language})}\n\n"
