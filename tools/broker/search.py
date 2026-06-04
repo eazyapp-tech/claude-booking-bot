@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json as _json
+import re
 
 import httpx
 
@@ -32,6 +33,77 @@ from utils.scoring import match_score as calc_match_score, gender_compatible
 
 
 SEARCH_CACHE_TTL = 900  # 15 minutes
+
+
+def _fmt_rent(raw) -> str:
+    """Format a raw rent value into the '₹9,000/mo' display string the FE card/sheet
+    expect (today's carousel value is prose-derived). Non-numeric input passes through
+    verbatim ('On request')."""
+    s = str(raw).strip()
+    digits = re.sub(r"[^\d]", "", s)
+    return f"₹{int(digits):,}/mo" if digits else s
+
+
+def build_carousel_items(info_list, search_lat, search_lng, limit: int = 5):
+    """Build native property-carousel items (+ map_center) from the structured `info`
+    dicts search builds (the set_property_info_map payload). Byte-compatible with
+    message_parser._build_carousel_parts so the live FE card + detail sheet render
+    identically — but sourced from structured data instead of regex-scraped prose.
+
+    Returns (items, map_center | None). Pure: no Redis/network/LLM.
+    """
+    items = []
+    for info in (info_list or [])[:limit]:
+        item = {
+            "name": info.get("property_name", ""),
+            "location": info.get("property_location", ""),
+            "rent": _fmt_rent(info.get("property_rent", "")),
+            "gender": info.get("pg_available_for", ""),
+            "distance": str(info.get("distance", "") or ""),
+            "image": info.get("property_image", ""),
+            "link": info.get("property_link", ""),
+            "lat": str(info.get("property_lat", "") or ""),
+            "lng": str(info.get("property_long", "") or ""),
+            "score": "",
+            "amenities": info.get("amenities", "") or "",
+        }
+        raw_score = info.get("match_score", "")
+        if raw_score not in ("", None):
+            try:
+                item["score"] = str(round(float(raw_score)))
+            except (ValueError, TypeError):
+                pass  # non-numeric score → leave ""
+        # Sheet-only enrichment (multi-image gallery + structured sharing) — additive,
+        # included ONLY when present (mirrors message_parser._sheet_enrichment, which
+        # returns {} for legacy cache entries so the sheet degrades gracefully).
+        images = info.get("images")
+        if images:
+            item["images"] = images
+        sharing = info.get("sharing_types_list")
+        if sharing:
+            item["sharing"] = sharing
+        items.append(item)
+
+    map_center = None
+    try:
+        if search_lat not in ("", None) and search_lng not in ("", None):
+            map_center = {"lat": float(search_lat), "lng": float(search_lng)}
+    except (ValueError, TypeError):
+        map_center = None
+    if not map_center:
+        coords = []
+        for it in items:
+            try:
+                if it["lat"] and it["lng"]:
+                    coords.append((float(it["lat"]), float(it["lng"])))
+            except (ValueError, TypeError):
+                continue
+        if coords:
+            map_center = {
+                "lat": sum(c[0] for c in coords) / len(coords),
+                "lng": sum(c[1] for c in coords) / len(coords),
+            }
+    return items, map_center
 
 TOOL_SCHEMA = {
     "name": "search_properties",
@@ -510,6 +582,14 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
         )
 
     set_property_info_map(user_id, existing_map)
+
+    # P4: record the native carousel on the signal slate so egress emits a structured
+    # carousel unit that SUPERSEDES the regex-scraped one (stripped in chat.py). Built
+    # from the same top-5 property_template WhatsApp shows; byte-compatible with the FE
+    # card + detail sheet, but sourced from structured data instead of the broker's prose.
+    _carousel_items, _carousel_center = build_carousel_items(property_template, lat, lng, limit=5)
+    if _carousel_items:
+        record_signal(carousel_items=_carousel_items, carousel_map_center=_carousel_center)
 
     # Save pg_ids for KB doc injection in broker agent (uses brand-config pg_id, not Rentok UUID)
     kb_ids = [info["pg_id"] for info in property_template[:5] if info.get("pg_id")]

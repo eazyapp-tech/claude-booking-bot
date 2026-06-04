@@ -907,6 +907,18 @@ def _to_native(legacy: dict) -> dict:
     return make_unit(kind, default_state, data)
 
 
+def has_native_listing_carousel(parts) -> bool:
+    """True iff `parts` contains a native property (listing) carousel unit. This inspects
+    the ACTUAL emitted output — the authoritative trigger for stripping the scraped carousel
+    in chat.py. Gating the strip on the `carousel_items` signal alone would strip-without-
+    replace whenever an honesty early-return (api_error/empty/partial) suppresses emission."""
+    return any(
+        isinstance(p, dict) and p.get("kind") == "carousel"
+        and (p.get("data") or {}).get("payload") == "listing"
+        for p in (parts or [])
+    )
+
+
 def generate_ui_parts(
     response_text: str,
     agent: str = "",
@@ -974,6 +986,20 @@ def generate_ui_parts(
     cmp_items = signals.get("comparison_items")
     if cmp_items:
         parts.append(make_unit("comparison", "result", {"items": cmp_items}))
+
+    # ── Structured property carousel (signal-driven, P4) ──
+    # search_properties records the FE-shaped items[] on the signal slate; emit a native
+    # carousel/listing unit so the FE renders cards from structured data instead of the
+    # regex-scraped prose. SUPERSEDES message_parser's property_carousel (stripped in
+    # chat.py when this signal is present). Dropped on WhatsApp by filter_interactive
+    # (it sends its carousel via the send_carousel template), so no double-send there.
+    car_items = signals.get("carousel_items")
+    if car_items:
+        cdata = {"payload": "listing", "items": car_items}
+        cm = signals.get("carousel_map_center")
+        if cm:
+            cdata["map_center"] = cm
+        parts.append(make_unit("carousel", "result", cdata))
 
     # ── Rich cards (status card, image gallery) — before chips ──
     try:
