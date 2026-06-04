@@ -47,6 +47,7 @@ jobs:
             test_booking_contract.py \
             test_language_mirroring.py \
             test_classify_robustness.py \
+            test_pgvector_param.py \
             test_admin_login.py \
             test_quality_analytics.py \
             test_listing_leak.py \

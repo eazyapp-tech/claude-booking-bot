@@ -16,13 +16,18 @@ _pgvector_available = False  # Set True after successful pgvector init
 
 
 async def _init_conn(conn) -> None:
-    """Per-connection init callback: register pgvector type if available."""
-    if _pgvector_available:
-        try:
-            from pgvector.asyncpg import register_vector
-            await register_vector(conn)
-        except Exception:
-            pass  # pgvector not available — silently skip
+    """Per-connection init callback.
+
+    We intentionally do NOT register the pgvector asyncpg codec. The codec makes
+    asyncpg expect a Python list for `vector` params, but update_document_embedding
+    and search_relevant_docs bind a hand-built "[...]" STRING with an explicit
+    ``::vector`` cast. With the codec registered, asyncpg tried to encode that
+    string as a vector and failed with `could not convert string to float` —
+    every semantic-KB query died (UAT log flood). Letting the param bind as text
+    and casting server-side via ``::vector`` is dependency-free and works whether
+    or not the pgvector Python package is installed.
+    """
+    return None
 
 
 async def init_pool() -> None:
