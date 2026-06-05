@@ -291,6 +291,41 @@ async def _enrich_with_images(properties: list, limit: int = 5) -> None:
     logger.info("image enrichment: %d/%d images found", enriched, len(targets))
 
 
+def _load_property_signals(properties: list) -> dict:
+    """Fetch outcome signals (conversion / no-show) per property — observably.
+
+    The learning loop must never run BLIND AND SILENT. If signals can't be loaded
+    (import missing, Redis outage) we still rank — degrading to no-signal scoring —
+    but we log it loudly so a dark loop is visible instead of swallowed. A missing
+    property id is skipped quietly (not a failure). Returns {property_id: signals}.
+    """
+    try:
+        from db.redis.analytics import get_property_signals
+    except ImportError as e:
+        logger.warning("outcome-signal scoring disabled — get_property_signals unavailable: %s", e)
+        return {}
+
+    out = {}
+    failures = 0
+    for p in properties:
+        pid = p.get("p_property_id", p.get("property_id", ""))
+        if not pid:
+            continue
+        try:
+            sig = get_property_signals(pid)
+            if sig:
+                out[pid] = sig
+        except Exception:
+            failures += 1
+    if failures:
+        logger.warning(
+            "outcome-signal fetch failed for %d/%d properties — ranking those without signals "
+            "(learning loop degraded, not blind-silent)",
+            failures, len(properties),
+        )
+    return out
+
+
 async def _enrich_top_results(properties: list, limit: int = 5) -> None:
     """Run image enrichment and geocoding concurrently for the top results.
 
@@ -443,11 +478,8 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
         "property_type": property_type or "",
         "pg_available_for": pg_available_for or "",
     }
-    # Load property outcome signals for scoring (Sprint 5)
-    try:
-        from db.redis.analytics import get_property_signals
-    except ImportError:
-        get_property_signals = None
+    # Load property outcome signals (conversion/no-show) — observably, never blind.
+    prop_signals = _load_property_signals(properties)
 
     for p in properties:
         prop_data = {
@@ -457,15 +489,8 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
             "property_type": p.get("p_property_type", ""),
             "pg_available_for": p.get("p_pg_available_for", ""),
         }
-        # Fetch outcome signals for this property (fire-and-forget on failure)
-        signals = {}
-        if get_property_signals:
-            try:
-                pid = p.get("p_property_id", p.get("property_id", ""))
-                if pid:
-                    signals = get_property_signals(pid)
-            except Exception:
-                pass
+        pid = p.get("p_property_id", p.get("property_id", ""))
+        signals = prop_signals.get(pid, {})
         p["_custom_score"] = calc_match_score(prop_data, scoring_prefs, deal_breakers=deal_breakers, property_signals=signals)
 
     # Sort by custom score (descending) to surface best matches first
