@@ -82,8 +82,42 @@ def test_demo_brand():
     check("provision keeps pg_ids", stored["pg_ids"] == ["pg_demo_1", "pg_demo_2"])
     check("provision returns same token", provisioned["brand_link_token"] == stored["brand_link_token"])
 
+import hashlib
+from core.accounts import signup, validate_signup
+
+def _sha(s): return hashlib.sha256(s.encode()).hexdigest()
+
+def test_signup():
+    print("test_signup")
+    settings.DEMO_PG_IDS = ["pg_demo_1"]
+    check("bad email rejected", validate_signup("nope", "password123") is not None)
+    check("short password rejected", validate_signup("a@b.com", "short") is not None)
+    check("valid input ok", validate_signup("a@b.com", "password123") is None)
+
+    result, reason = signup("New@Brand.com", "password123", "Acme PG")
+    check("signup ok", reason == "ok")
+    check("api_key prefix", result["api_key"].startswith("eapg_"))
+    check("returns link token", bool(result["brand_link_token"]))
+
+    acct = get_account("new@brand.com")
+    check("account stored (lowercased)", acct is not None)
+    check("password hashed not plaintext", acct["password_sha256"] == _sha("password123"))
+    check("no plaintext password stored", "password" not in acct)
+    check("email starts unverified", acct["email_verified"] is False)
+
+    brand = get_brand_config(result["api_key"])
+    check("demo brand provisioned", brand is not None and brand["is_demo"] is True)
+    check("verify token issued", bool(result["verify_token"]))
+
+    _, dup_reason = signup("new@brand.com", "password123", "Dup")
+    check("duplicate email rejected", dup_reason == "exists")
+
+    _, bad_reason = signup("bademail", "password123", "X")
+    check("invalid signup reason", bad_reason.startswith("invalid:"))
+
 if __name__ == "__main__":
     test_store()
     test_demo_brand()
+    test_signup()
     print(f"\n{_passed} passed, {_failed} failed")
     sys.exit(0 if _failed == 0 else 1)
