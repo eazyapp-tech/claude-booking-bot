@@ -178,6 +178,56 @@ async def save_visit_time(
     )
 
 
+def _build_lead_remarks(prefs: dict, memory: dict) -> str:
+    """Distill the user's captured intent into ONE compact, manager-readable line.
+
+    Persisted backend-side to Tenant.lead_remarks and surfaced to the property
+    manager as the lead's `comments` field (and `Notes` in reports) — verified
+    against rentok-backend. Without this, the manager receives a bare name+date
+    and has no idea *why* the lead matters. Only fields that are actually present
+    are emitted, so a sparse profile never produces dangling fragments.
+    """
+    prefs = prefs or {}
+    memory = memory or {}
+    parts = []
+
+    min_b = prefs.get("min_budget")
+    max_b = prefs.get("max_budget")
+    if min_b and max_b:
+        parts.append(f"Budget ₹{min_b}–{max_b}")
+    elif max_b:
+        parts.append(f"Budget up to ₹{max_b}")
+    elif min_b:
+        parts.append(f"Budget from ₹{min_b}")
+
+    if prefs.get("location"):
+        parts.append(f"Area: {prefs['location']}")
+
+    move_in = prefs.get("move_in_date") or memory.get("move_in_date")
+    if move_in:
+        parts.append(f"Move-in: {move_in}")
+
+    if prefs.get("property_type"):
+        parts.append(f"Type: {prefs['property_type']}")
+
+    sharing = prefs.get("unit_types_available") or prefs.get("sharing")
+    if sharing:
+        parts.append(f"Sharing: {sharing}")
+
+    must_have = prefs.get("must_have_amenities") or prefs.get("amenities")
+    if must_have:
+        parts.append(f"Must-have: {must_have}")
+
+    deal_breakers = memory.get("deal_breakers")
+    if deal_breakers:
+        db_str = ", ".join(deal_breakers) if isinstance(deal_breakers, (list, tuple)) else str(deal_breakers)
+        if db_str.strip():
+            parts.append(f"Avoid: {db_str}")
+
+    parts.append("via EazyPG AI assistant")
+    return " | ".join(parts)
+
+
 async def _create_external_lead(
     user_id: str,
     eazypg_id: str,
@@ -193,12 +243,14 @@ async def _create_external_lead(
     gender = get_aadhar_gender(user_id) or "Any"
     prefs = get_preferences(user_id)
     budget = prefs.get("min_budget") or prefs.get("max_budget", "")
+    mem_ctx = get_user_memory(user_id) or {}
+    room_type = prefs.get("unit_types_available") or prefs.get("sharing") or ""
+    remarks = _build_lead_remarks(prefs, mem_ctx)
 
     phone = get_user_phone(user_id) or ""
     name = get_aadhar_user_name(user_id)
     if not name:
-        mem = get_user_memory(user_id) or {}
-        name = mem.get("profile_name") or mem.get("name") or phone or "Guest"
+        name = mem_ctx.get("profile_name") or mem_ctx.get("name") or phone or "Guest"
 
     payload = {
         "eazypg_id": eazypg_id,
@@ -206,6 +258,11 @@ async def _create_external_lead(
         "name": name,
         "gender": gender,
         "rent_range": budget,
+        "room_type": room_type,
+        # Manager-facing context — persisted to Tenant.lead_remarks, shown as the
+        # lead's `comments`. The bot's one lever on the silo: the manager sees the
+        # real intent (budget, area, must-haves, deal-breakers) instead of a bare lead.
+        "remarks": remarks,
         # Ground truth (RentOk backend): C1 GET /tenant/get-tenant_uuid resolves
         # leads ONLY where lead_source="bookingBot00" (AND status=3). Any other
         # source string is invisible to the payment-link flow, so the bot MUST
