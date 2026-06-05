@@ -20,6 +20,11 @@ class _FakeRedis:
     def setex(self, k, ttl, v): self.store[k] = v.encode() if isinstance(v, str) else v
     def delete(self, k): self.store.pop(k, None)
     def exists(self, k): return 1 if k in self.store else 0
+    def incr(self, k):
+        v = int(self.store.get(k, 0)) + 1
+        self.store[k] = str(v).encode()
+        return v
+    def expire(self, k, ttl): pass
     def pipeline(self): return _FakePipe(self.store)
 
 _fake = _FakeRedis()
@@ -82,10 +87,7 @@ def test_demo_brand():
     check("provision keeps pg_ids", stored["pg_ids"] == ["pg_demo_1", "pg_demo_2"])
     check("provision returns same token", provisioned["brand_link_token"] == stored["brand_link_token"])
 
-import hashlib
-from core.accounts import signup, validate_signup
-
-def _sha(s): return hashlib.sha256(s.encode()).hexdigest()
+from core.accounts import signup, validate_signup, _verify_password, check_signup_rate
 
 def test_signup():
     print("test_signup")
@@ -101,9 +103,18 @@ def test_signup():
 
     acct = get_account("new@brand.com")
     check("account stored (lowercased)", acct is not None)
-    check("password hashed not plaintext", acct["password_sha256"] == _sha("password123"))
+    check("password stored hashed (salted scrypt)", bool(acct.get("password_hash")) and acct["password_hash"] != "password123")
+    check("per-user salt stored", bool(acct.get("password_salt")))
+    check("password verifies via scrypt", _verify_password("password123", acct["password_salt"], acct["password_hash"]) is True)
+    check("wrong password fails verify", _verify_password("nope", acct["password_salt"], acct["password_hash"]) is False)
     check("no plaintext password stored", "password" not in acct)
+    check("no reversible sha256 field", "password_sha256" not in acct)
     check("email starts unverified", acct["email_verified"] is False)
+
+    # Same password for two users must yield different hashes (per-user salt).
+    signup("salt2@brand.com", "password123", "Salt2")
+    a1 = get_account("new@brand.com"); a2 = get_account("salt2@brand.com")
+    check("identical passwords hash differently", a1["password_hash"] != a2["password_hash"])
 
     brand = get_brand_config(result["api_key"])
     check("demo brand provisioned", brand is not None and brand["is_demo"] is True)
@@ -160,11 +171,21 @@ def test_login_precedence():
     finally:
         legacy.verify_admin_login = orig
 
+def test_signup_rate_limit():
+    print("test_signup_rate_limit")
+    settings.SIGNUP_MAX_PER_WINDOW = 3
+    ip = "203.0.113.7"
+    allowed = [check_signup_rate(ip) for _ in range(5)]
+    check("first N within limit are allowed", allowed[:3] == [True, True, True])
+    check("over-limit attempts are blocked", allowed[3:] == [False, False])
+    check("a different IP is unaffected", check_signup_rate("198.51.100.9") is True)
+
 if __name__ == "__main__":
     test_store()
     test_demo_brand()
     test_signup()
     test_login_and_verify()
     test_login_precedence()
+    test_signup_rate_limit()
     print(f"\n{_passed} passed, {_failed} failed")
     sys.exit(0 if _failed == 0 else 1)

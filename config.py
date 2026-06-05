@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     DEMO_CITIES: list[str] = ["Mumbai"]
     DEMO_AREAS: list[str] = []
     ADMIN_BASE_URL: str = "https://eazypg-admin.vercel.app"  # used to build the email-verification link
+    # Self-serve signup — per-IP abuse throttle (unauthenticated endpoint)
+    SIGNUP_MAX_PER_WINDOW: int = 10
+    SIGNUP_RATE_WINDOW_SECONDS: int = 3600  # 1h
 
     # Web Intelligence
     TAVILY_API_KEY: Optional[str] = None  # Tavily search API key for web intelligence

@@ -13,6 +13,7 @@ import re
 import secrets
 import time
 
+from config import settings
 from core.log import get_logger
 from core.demo_brand import provision_demo_brand
 from db.redis.accounts import (
@@ -26,14 +27,54 @@ logger = get_logger("accounts")
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD_LEN = 8
 
+# scrypt work factors (RFC 7914 interactive-login profile). Salted + memory-hard
+# so stored hashes are not offline-crackable like a bare SHA-256 digest would be.
+_SCRYPT_N = 16384
+_SCRYPT_R = 8
+_SCRYPT_P = 1
+_SCRYPT_DKLEN = 32
 
-def _sha256_hex(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+def _hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
+    """Return (hash_hex, salt_hex) for a password using a per-user random salt."""
+    salt = salt or secrets.token_bytes(16)
+    dk = hashlib.scrypt(
+        (password or "").encode("utf-8"), salt=salt,
+        n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=_SCRYPT_DKLEN,
+    )
+    return dk.hex(), salt.hex()
+
+
+def _verify_password(password: str, salt_hex: str, hash_hex: str) -> bool:
+    """Constant-time check of a password against a stored scrypt hash + salt."""
+    if not salt_hex or not hash_hex:
+        return False
+    candidate, _ = _hash_password(password or "", bytes.fromhex(salt_hex))
+    return hmac.compare_digest(candidate, hash_hex)
 
 
 def _generate_api_key() -> str:
     """Random, unguessable brand key the panel sends as X-API-Key."""
     return "eapg_" + secrets.token_urlsafe(24)
+
+
+def check_signup_rate(client_ip: str) -> bool:
+    """Increment the per-IP signup counter; return True if still within the limit.
+
+    Fail-open on a Redis hiccup (consistent with the admin-login throttle): never
+    block a legitimate signup because Redis blipped.
+    """
+    try:
+        from db.redis._base import _r
+
+        key = f"signup_rate:{client_ip}"
+        r = _r()
+        n = r.incr(key)
+        if n == 1:
+            r.expire(key, settings.SIGNUP_RATE_WINDOW_SECONDS)
+        return n <= settings.SIGNUP_MAX_PER_WINDOW
+    except Exception:
+        return True
 
 
 def validate_signup(email: str, password: str) -> str | None:
@@ -62,9 +103,11 @@ def signup(email: str, password: str, brand_name: str = "") -> tuple[dict | None
     demo = provision_demo_brand(api_key, brand_name)  # persists brand_config first
     brand_hash = _brand_hash(api_key)
 
+    password_hash, password_salt = _hash_password(password)
     save_account({
         "email": email_norm,
-        "password_sha256": _sha256_hex(password),
+        "password_hash": password_hash,
+        "password_salt": password_salt,
         "api_key": api_key,
         "brand_hash": brand_hash,
         "email_verified": False,
@@ -92,7 +135,7 @@ def verify_login(email: str, password: str) -> tuple[str | None, str]:
     account = get_account(email)
     if not account:
         return None, "invalid"
-    if not hmac.compare_digest(_sha256_hex(password or ""), account.get("password_sha256", "")):
+    if not _verify_password(password or "", account.get("password_salt", ""), account.get("password_hash", "")):
         return None, "invalid"
     api_key = account.get("api_key", "")
     if not get_brand_config(api_key):

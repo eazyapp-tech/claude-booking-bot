@@ -857,7 +857,9 @@ async def admin_set_flags(request: Request, brand_hash: str = Depends(require_ad
 
 @router.post("/admin/login")
 async def admin_login(request: Request):
-    from core.admin_login import verify_admin_login
+    from core.admin_login import (
+        verify_admin_login, is_throttled, _record_failure, _clear_failures,
+    )
     from core.accounts import verify_login
 
     body = await request.json()
@@ -866,12 +868,23 @@ async def admin_login(request: Request):
     if not username or not password:
         raise HTTPException(status_code=400, detail="username and password are required")
 
-    # Self-serve accounts first (username == email); fall back to the legacy env credential.
+    # Brute-force throttle covers BOTH the account path and the legacy credential
+    # (the account path has no internal throttle of its own).
+    if is_throttled(username):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+
+    # Self-serve accounts first (username == email). Only fall back to the legacy
+    # env credential when the account is genuinely not found / wrong password
+    # ("invalid") — a correct account whose brand is mis-provisioned must surface
+    # as "misconfigured", not be masked behind the legacy 401.
     api_key, reason = verify_login(username, password)
-    if reason != "ok":
+    consulted_legacy = False
+    if reason == "invalid":
+        consulted_legacy = True
         api_key, reason = verify_admin_login(username, password)
 
     if reason == "ok":
+        _clear_failures(username)
         return {"api_key": api_key}
     if reason == "unconfigured":
         raise HTTPException(status_code=503, detail="Admin login is not configured")
@@ -879,12 +892,19 @@ async def admin_login(request: Request):
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
     if reason == "misconfigured":
         raise HTTPException(status_code=503, detail="Admin login misconfigured")
+    # legacy verify_admin_login records its own failure; only count the account path here.
+    if not consulted_legacy:
+        _record_failure(username)
     raise HTTPException(status_code=401, detail="Invalid username or password")
 
 
 @router.post("/admin/signup")
 async def admin_signup(request: Request):
-    from core.accounts import signup, send_verification_email
+    from core.accounts import signup, send_verification_email, check_signup_rate
+
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_signup_rate(client_ip):
+        raise HTTPException(status_code=429, detail="Too many signups from this network. Try again later.")
 
     body = await request.json()
     email = (body.get("email") or "").strip()
