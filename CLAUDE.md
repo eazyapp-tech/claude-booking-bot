@@ -77,7 +77,7 @@ agents/default_agent.py   (62)  — Greetings, brand info, general help | get_co
 ### Tools — Booking
 ```
 tools/booking/payment.py        (167) — Payment link flow | create_payment_link@23, verify_payment@99
-tools/booking/schedule_visit.py (118) — Visit scheduling + lead creation | save_visit_time@16, _create_external_lead@77
+tools/booking/schedule_visit.py (162) — Visit scheduling + lead creation | save_visit_time@16, _build_lead_remarks@181 (B1: distills captured intent → one manager-facing line), _create_external_lead@~233 (lead payload carries `remarks`→Tenant.lead_remarks + `room_type`; reused by schedule_call.py so both visit+call leads enriched)
 tools/booking/schedule_call.py  (69)  — Call scheduling | save_call_time@16
 tools/booking/reserve.py        (62)  — Bed reservation | check_reserve_bed@15, reserve_bed@40
 tools/booking/cancel.py         (35)  — Cancel booking | cancel_booking@15
