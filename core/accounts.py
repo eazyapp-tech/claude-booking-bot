@@ -82,3 +82,43 @@ def signup(email: str, password: str, brand_name: str = "") -> tuple[dict | None
         "verify_token": verify_token,
         "email": email_norm,
     }, "ok"
+
+
+def verify_login(email: str, password: str) -> tuple[str | None, str]:
+    """Native email/password login. Returns (api_key, reason).
+
+    reason: "ok" | "invalid" | "misconfigured".
+    """
+    account = get_account(email)
+    if not account:
+        return None, "invalid"
+    if not hmac.compare_digest(_sha256_hex(password or ""), account.get("password_sha256", "")):
+        return None, "invalid"
+    api_key = account.get("api_key", "")
+    if not get_brand_config(api_key):
+        logger.error("Account %s has no brand config — provisioning drift", email)
+        return None, "misconfigured"
+    return api_key, "ok"
+
+
+def verify_email(token: str) -> bool:
+    """Consume a verification token and flip the account's email_verified. False if bad/expired."""
+    email = consume_email_verify_token(token)
+    if not email:
+        return False
+    account = get_account(email)
+    if not account:
+        return False
+    account["email_verified"] = True
+    save_account(account)
+    return True
+
+
+def send_verification_email(email: str, token: str) -> None:
+    """Pluggable delivery. Defaults to LOGGING the link — no email provider wired in v1.
+
+    Swap this body for a real provider (Resend/SES/etc.) when delivery is needed.
+    """
+    from config import settings
+    link = f"{settings.ADMIN_BASE_URL}/verify-email?token={token}"
+    logger.info("[email-verify] %s -> %s", email, link)

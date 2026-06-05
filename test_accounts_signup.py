@@ -115,9 +115,34 @@ def test_signup():
     _, bad_reason = signup("bademail", "password123", "X")
     check("invalid signup reason", bad_reason.startswith("invalid:"))
 
+from core.accounts import verify_login, verify_email
+
+def test_login_and_verify():
+    print("test_login_and_verify")
+    settings.DEMO_PG_IDS = ["pg_demo_1"]
+    result, reason = signup("login@brand.com", "password123", "Acme")
+    assert reason == "ok"
+
+    key, lr = verify_login("login@brand.com", "password123")
+    check("correct login ok", lr == "ok")
+    check("login returns the brand key", key == result["api_key"])
+    check("returned key resolves to brand", get_brand_config(key) is not None)
+
+    check("case-insensitive login", verify_login("LOGIN@BRAND.COM", "password123")[1] == "ok")
+    check("wrong password rejected", verify_login("login@brand.com", "WRONG")[1] == "invalid")
+    check("unknown user rejected", verify_login("ghost@x.com", "password123")[1] == "invalid")
+
+    # email verification
+    check("starts unverified", get_account("login@brand.com")["email_verified"] is False)
+    check("verify ok", verify_email(result["verify_token"]) is True)
+    check("now verified", get_account("login@brand.com")["email_verified"] is True)
+    check("token single-use", verify_email(result["verify_token"]) is False)
+    check("bad token rejected", verify_email("garbage") is False)
+
 if __name__ == "__main__":
     test_store()
     test_demo_brand()
     test_signup()
+    test_login_and_verify()
     print(f"\n{_passed} passed, {_failed} failed")
     sys.exit(0 if _failed == 0 else 1)
