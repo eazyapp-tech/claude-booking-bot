@@ -53,6 +53,26 @@ def _verify_password(password: str, salt_hex: str, hash_hex: str) -> bool:
     return hmac.compare_digest(candidate, hash_hex)
 
 
+def trusted_client_ip(xff_header: str | None, peer_ip: str | None) -> str:
+    """Resolve the real client IP for rate-limiting on Render (single trusted proxy).
+
+    Render appends the real client IP as the LAST entry of X-Forwarded-For. A
+    client can forge LEADING entries, so we take the last hop (the one Render
+    itself added), NEVER the first — taking the first lets an attacker rotate a
+    fake leading IP to walk past the per-IP throttle. Last-hop is correct whether
+    the proxy appends ("fake, realIP") or overwrites ("realIP"). Falls back to the
+    socket peer when the header is absent.
+
+    NOTE: assumes exactly one trusted proxy hop (Render). If a CDN is ever placed
+    in front of this service, the trusted hop count must be revisited.
+    """
+    if xff_header and xff_header.strip():
+        parts = [p.strip() for p in xff_header.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
+    return peer_ip or "unknown"
+
+
 def _generate_api_key() -> str:
     """Random, unguessable brand key the panel sends as X-API-Key."""
     return "eapg_" + secrets.token_urlsafe(24)

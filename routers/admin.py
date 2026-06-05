@@ -856,19 +856,16 @@ async def admin_set_flags(request: Request, brand_hash: str = Depends(require_ad
 # ---------------------------------------------------------------------------
 
 def _client_ip(request: Request) -> str:
-    """Real client IP for rate-limiting behind Azure Front Door / Container Apps.
+    """Real client IP for rate-limiting. Thin adapter over core.accounts.trusted_client_ip.
 
-    `request.client.host` is the proxy hop, not the caller. Front Door sets
-    X-Azure-ClientIP to the true client (clients can't forge it); prefer that,
-    then the first X-Forwarded-For hop, then the socket peer.
+    This service runs on Render (single trusted proxy), which appends the real
+    client IP as the LAST X-Forwarded-For hop. Leading hops are client-forgeable,
+    so the resolver takes the last hop, never the first. (Azure is RentOk's stack,
+    not this prototype's — there is no X-Azure-ClientIP here.)
     """
-    azure = request.headers.get("X-Azure-ClientIP")
-    if azure and azure.strip():
-        return azure.strip()
-    xff = request.headers.get("X-Forwarded-For")
-    if xff and xff.strip():
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    from core.accounts import trusted_client_ip
+    peer = request.client.host if request.client else None
+    return trusted_client_ip(request.headers.get("X-Forwarded-For"), peer)
 
 
 @router.post("/admin/login")

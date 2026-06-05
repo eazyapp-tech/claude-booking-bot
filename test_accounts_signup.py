@@ -192,6 +192,18 @@ def test_login_ip_throttle():
     clear_login_ip_failures(ip)
     check("cleared after success", login_ip_throttled(ip) is False)
 
+def test_trusted_client_ip():
+    print("test_trusted_client_ip")
+    from core.accounts import trusted_client_ip
+    # On Render (single trusted proxy) the real client is the LAST X-Forwarded-For hop.
+    check("no header → socket peer", trusted_client_ip(None, "10.0.0.5") == "10.0.0.5")
+    check("blank header → socket peer", trusted_client_ip("   ", "10.0.0.5") == "10.0.0.5")
+    check("single hop is the client", trusted_client_ip("203.0.113.7", "10.0.0.5") == "203.0.113.7")
+    check("spoofed leading hop ignored (take last)", trusted_client_ip("1.2.3.4, 203.0.113.7", "10.0.0.5") == "203.0.113.7")
+    check("many forged hops, last wins", trusted_client_ip("9.9.9.9, 8.8.8.8, 203.0.113.7", "10.0.0.5") == "203.0.113.7")
+    check("whitespace tolerated", trusted_client_ip(" 1.1.1.1 ,  203.0.113.7 ", None) == "203.0.113.7")
+    check("no header, no peer → unknown", trusted_client_ip(None, None) == "unknown")
+
 if __name__ == "__main__":
     test_store()
     test_demo_brand()
@@ -200,5 +212,6 @@ if __name__ == "__main__":
     test_login_precedence()
     test_signup_rate_limit()
     test_login_ip_throttle()
+    test_trusted_client_ip()
     print(f"\n{_passed} passed, {_failed} failed")
     sys.exit(0 if _failed == 0 else 1)
