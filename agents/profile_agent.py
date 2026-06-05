@@ -5,10 +5,10 @@ Uses Haiku (simple tool lookups).
 
 from config import settings
 from core.claude import AnthropicEngine
-from core.prompts import PROFILE_AGENT_PROMPT, format_prompt
+from core.prompts import PROFILE_AGENT_PROMPT, format_prompt, build_name_directive
 from tools.registry import get_schemas_for_agent, get_handlers_for_agent
 from core.tool_executor import ToolExecutor
-from db.redis_store import get_account_values
+from db.redis_store import get_account_values, get_user_name
 from utils.date import today_date, current_day
 
 
@@ -23,7 +23,7 @@ def get_config(user_id: str, language: str = "en") -> dict:
         areas=account.get("areas", ""),
         today_date=today_date(),
         current_day=current_day(),
-    )
+    ) + build_name_directive(get_user_name(user_id))
     tools = get_schemas_for_agent("profile")
     executor = ToolExecutor()
     executor.register_many(get_handlers_for_agent("profile"))

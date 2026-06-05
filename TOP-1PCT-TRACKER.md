@@ -44,7 +44,8 @@ protection + the CI gate guard `main`.
 ## 🎯 Current focus
 
 - **Last shipped:** **C1** — OSRM circuit breaker + honest straight-line fallback ✅ ([#43](https://github.com/5s10r2/claude-booking-bot/pull/43)). **Live-verified 4/4** (R1 intact via osrm_get; estimate_commute 30s dead-air eliminated — 0 new timeouts across 3 commute Qs). Preceded by **R1 commute ranking** (marquee) ✅ #37/#38/#39 + eazypg-chat#8, live 10/10.
-- **Doing next:** your call — suggested queue: **G-13 + G-20** (cheap "Real" wins, data already in payload) → **R8** (intent-tuned ranking, now unblocked).
+- **In PR:** **NAME-1** — name capture + personalization (your flagged gap: the bot never asked the user's name, and only `default_agent` ever used it; broker — the main agent — didn't). [#45](https://github.com/5s10r2/claude-booking-bot/pull/45), 31/31 hermetic, gate 39/39.
+- **Doing next:** your call — **G-20** (build the per-brand support line — you supply numbers) → **R8** (intent-tuned ranking, needs a design pass first). G-13 verified done.
 - **Blocked on you:** **OSRM EC2 restart** (backend/AWS — bot is correct either way now, but a restart auto-upgrades R1 to precise "X min" labels). 2 product decisions (E3, AV-§2) when convenient.
 
 > **Live finding (2026-06-05):** `maps.rentok.com` OSRM is **down at the network level** on prod (EC2 stopped/terminated — confirmed with backend; the bot is the live consumer, backend's own OSRM refs are commented out). **C1 makes the bot correct regardless:** ranks by honest straight-line proximity, skips the dead host instantly via the breaker, self-heals when the EC2 returns. On restore, confirm the bot's Render `OSRM_API_KEY` + the OSRM param name (`api_key` vs `key`) — one live commute search flips labels "~X km" → "X min".
@@ -60,8 +61,9 @@ protection + the CI gate guard `main`.
 | **R1** | Rank by the user's real commute destination, not the search pin. **Highest lift. ✅ LIVE-VERIFIED 10/10.** Reuses `commute_from`; ranks top-10 by office proximity (haversine always + OSRM drive-time upgrade); card shows "X min to <dest>" or honest "~X km from <dest>"; graceful + self-heals. Absent destination → unchanged. 26/26 hermetic. | Rf Rl | ✅ | [#37](https://github.com/5s10r2/claude-booking-bot/pull/37) [#38](https://github.com/5s10r2/claude-booking-bot/pull/38) [#39](https://github.com/5s10r2/claude-booking-bot/pull/39) |
 | **C1** | OSRM circuit breaker + honest fallback. **✅ LIVE-VERIFIED 4/4.** `core/osrm.py` skips the dead host for a 10-min cooldown (no per-call timeout tax), probes for recovery, self-heals. estimate_commute/fetch_landmarks now return honest "~X km straight-line" (broker stops fabricating); R1 routed through it too. 18/18 hermetic. | H In Gr | ✅ | [#43](https://github.com/5s10r2/claude-booking-bot/pull/43) |
 | **R5** | Outcome-signal load degrades visibly (logs a warning) instead of silently blind | Rf | ✅ | [#35](https://github.com/5s10r2/claude-booking-bot/pull/35) |
-| **G-13** | Surface property lat/long (already in payload — formatting only) | Rl | ⬜ | — |
-| **G-20** | Surface support contacts (already in payload — formatting only) | Rl | ⬜ | — |
+| **NAME-1** | Capture + use the user's name (personalization). `save_name` tool (web analog of WhatsApp profile name) + every conversational agent appends an uncached name directive → addresses the user by first name; absent name = byte-clean prompt. 31/31 hermetic. | Rl Gr | ⏳ | [#45](https://github.com/5s10r2/claude-booking-bot/pull/45) |
+| **G-13** | Surface property lat/long. **✅ ALREADY DONE — verify-first found the "formatting only" label was stale.** Coords reach the user three ways: carousel `lat`/`lng` + `map_center` → Leaflet Map View; `google_map` deep link built in search.py:757 + property_details.py:161. No PR needed. | Rl | ✅ | — |
+| **G-20** | Surface support contacts. **🔵 NOT formatting-only — product-gated.** Property owner phone is *deliberately* hidden (prompts.py:234 — privacy + lead funnel); no brand support line exists in config. **Decision (2026-06-05): add a per-brand `support_contact` field** (admin-editable). Next bot+config PR; you supply numbers to seed. | Rl | ⬜ | — |
 | **P1.7** | KYC generate-failure no longer reported as false success | H | ⏳ | [#30](https://github.com/5s10r2/claude-booking-bot/pull/30) |
 | **R8** | Intent-tuned ranking weight profiles per user. **Do after R1 + R5.** | Rf | ⬜ | — |
 
@@ -161,6 +163,21 @@ Evidence so we never re-litigate or duplicate finished work.
 
 ## Session log (append-only)
 
+- **2026-06-05 (NAME-1 + G-13/G-20 verify)** — PO flagged: the bot never asks the
+  lead's name → zero personalization. Verify-first confirmed it and root-caused two
+  breaks: (1) **capture** — `set_user_name` fires ONLY on the WhatsApp webhook (Meta
+  profile name); web users are never asked. (2) **usage** — `get_user_name` was read
+  in exactly ONE place (`default_agent`), and `DEFAULT_AGENT_PROMPT` has no
+  `{user_name}` placeholder, so even that was dead. The broker/booking/profile agents
+  never received the name. **NAME-1 fix** ([#45](https://github.com/5s10r2/claude-booking-bot/pull/45)): `save_name` tool (web analog,
+  in ALWAYS_TOOLS so capturable on any broker turn) + `build_name_directive()` appended
+  (UNCACHED — keeps `_base.md` cacheable) to all four agents' prompts; qualify skills
+  ask once after first results (never stacked with the commute ask) + greet returning
+  users by name. 31/31 hermetic, gate 39/39. Same verify-first pass settled **G-13**
+  (already done — coords reach the user via Leaflet map + `google_map` link; the
+  "formatting only" label was stale) and **G-20** (NOT formatting — property phone is
+  deliberately hidden for privacy/funnel; no brand support line in config → PO decided
+  to add a per-brand `support_contact` field, next PR).
 - **2026-06-05** — Engagement kickoff. Aligned on 5-truth bar + bot-first sequencing.
   Ran cross-repo audit (reconciled roadmap vs real code; caught two wrong agent
   assumptions: pg_ids is sync; `remarks` is not a no-op). Created this tracker.

@@ -30,6 +30,7 @@ _AGENT_TOOLS: dict[str, list[str]] = {
     "default": ["brand_info", "web_search"],
     "broker": [
         "save_preferences",
+        "save_name",
         "search_properties",
         "fetch_property_details",
         "shortlist_property",
@@ -97,6 +98,7 @@ def init_registry() -> None:
     """
     # -- broker --
     from tools.broker.preferences import save_preferences, TOOL_SCHEMA as _save_prefs_schema
+    from tools.broker.save_name import save_name, TOOL_SCHEMA as _save_name_schema
     from tools.broker.search import search_properties, TOOL_SCHEMA as _search_schema
     from tools.broker.property_details import fetch_property_details, TOOL_SCHEMA as _details_schema
     from tools.broker.shortlist import shortlist_property, TOOL_SCHEMA as _shortlist_schema
@@ -142,9 +144,10 @@ def init_registry() -> None:
     from tools.profile.events import get_scheduled_events, TOOL_SCHEMA as _events_schema
     from tools.profile.shortlisted import get_shortlisted_properties, TOOL_SCHEMA as _shortlisted_schema
 
-    # Register all 28 tools: (name, schema, handler)
+    # Register all 29 tools: (name, schema, handler)
     register_tool("brand_info",                _brand_schema,            brand_info)
     register_tool("save_preferences",          _save_prefs_schema,       save_preferences)
+    register_tool("save_name",                 _save_name_schema,        save_name)
     register_tool("search_properties",         _search_schema,           search_properties)
     register_tool("fetch_property_details",    _details_schema,          fetch_property_details)
     register_tool("shortlist_property",        _shortlist_schema,        shortlist_property)
