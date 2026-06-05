@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json as _json
+import math
 import re
 
 import httpx
@@ -37,10 +38,24 @@ from utils.scoring import match_score as calc_match_score, gender_compatible_lis
 SEARCH_CACHE_TTL = 900  # 15 minutes
 
 # R1 — commute-based ranking. Re-rank at most this many top (by area) candidates by
-# real driving time to the user's daily destination, in ONE OSRM matrix call. Bounds
-# the URL length / compute; properties beyond this window keep their area ranking.
+# proximity to the user's daily destination. Bounds the URL length / compute;
+# properties beyond this window keep their area ranking.
 COMMUTE_RANK_TOPN = 10
-COMMUTE_RANK_TIMEOUT_S = 12  # tight: one matrix call should be fast (Instant truth)
+# Try ONE OSRM matrix call for precise drive time, but keep the wait short — if the
+# routing service is slow/down we fall back to straight-line distance instantly
+# rather than dead-air the search (Instant truth). When OSRM is healthy a single
+# matrix call returns well under this.
+COMMUTE_OSRM_TIMEOUT_S = 6
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle distance in km between two lat/lng points."""
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return r * 2 * math.asin(math.sqrt(a))
 
 
 def _fmt_rent(raw) -> str:
@@ -90,11 +105,15 @@ def build_carousel_items(info_list, search_lat, search_lng, limit: int = 5):
         sharing = info.get("sharing_types_list")
         if sharing:
             item["sharing"] = sharing
-        # R1 — real commute label, shown on the card only when computed this search.
+        # R1 — commute label, shown on the card only when computed this search.
+        # Precise drive time when OSRM answered; honest straight-line km otherwise.
         cmin = info.get("commute_minutes")
+        ckm = info.get("commute_km")
         clabel = info.get("commute_label")
-        if cmin is not None and clabel:
+        if clabel and cmin is not None:
             item["commute"] = f"{int(cmin)} min to {clabel}"
+        elif clabel and ckm is not None:
+            item["commute"] = f"~{ckm} km from {clabel}"
         items.append(item)
 
     map_center = None
@@ -378,17 +397,21 @@ def _prop_coords(p: dict) -> tuple:
 
 async def _compute_commute_minutes(properties: list, destination: str,
                                    limit: int = COMMUTE_RANK_TOPN) -> None:
-    """R1 — fill `_commute_min` (real driving minutes) for the top-N candidates.
+    """R1 — rank the top-N candidates by proximity to the user's daily destination.
 
-    When the user gave a daily commute destination (office/college), compute the
-    real driving time from THAT place to each top candidate in ONE OSRM table call
-    (source = destination, destinations = properties) — far cheaper than N
-    point-to-point calls. Mutates the property dicts in place.
+    When the user gave a destination (office/college), this fills, for each top
+    candidate:
+      - `_commute_km`  : straight-line distance to the destination (ALWAYS, instant) —
+                          a reliable office-proximity signal with no infra dependency.
+      - `_commute_min` : real driving minutes via ONE OSRM table call (source = dest,
+                          destinations = properties), set ONLY when the routing
+                          service responds in time. This UPGRADES the km signal to a
+                          precise one. We never invent a drive time we didn't measure.
 
-    Fully graceful by design: a vague/empty destination, a destination that won't
-    geocode, properties without coordinates, or any OSRM error simply leaves the
-    properties untouched so ranking degrades to area distance. It NEVER raises —
-    the commute term is a bonus signal, never a failure point.
+    Fully graceful: a vague/empty destination or one that won't geocode, or
+    properties without coordinates, simply leave the properties untouched so ranking
+    degrades to search-pin distance. A slow/down OSRM degrades only the *label*
+    (km instead of minutes), not the ranking. It NEVER raises.
     """
     # Reuse estimate_commute's vague-destination guard so we never geocode "office".
     from tools.broker.landmarks import _VAGUE_DESTINATIONS
@@ -405,6 +428,7 @@ async def _compute_commute_minutes(properties: list, destination: str,
     if not dest_lat or not dest_lng:
         logger.info("commute: could not geocode destination %r — ranking by area", dest)
         return
+    dest_lat, dest_lng = float(dest_lat), float(dest_lng)
 
     candidates = properties[:limit]
     # Fill in any missing property coordinates (concurrent) so commute can cover the
@@ -423,7 +447,14 @@ async def _compute_commute_minutes(properties: list, destination: str,
         logger.info("commute: no top-%d candidates have coordinates — ranking by area", limit)
         return
 
-    # ONE OSRM table call: index 0 is the destination (source), 1..N the properties.
+    # Straight-line distance — always available, instant. This is the office-proximity
+    # ranking signal even when the routing service is unreachable.
+    for p, plat, plng in targets:
+        p["_commute_km"] = round(_haversine_km(dest_lat, dest_lng, plat, plng), 1)
+
+    # Upgrade to precise driving time via ONE OSRM table call (index 0 = destination,
+    # 1..N = properties). Short timeout: if OSRM is slow/down we keep the km signal
+    # rather than dead-air the search.
     coord_str = f"{dest_lng},{dest_lat}" + "".join(
         f";{lng},{lat}" for _, lat, lng in targets
     )
@@ -433,10 +464,10 @@ async def _compute_commute_minutes(properties: list, destination: str,
                 f"https://maps.rentok.com/table/v1/driving/{coord_str}",
                 params={"sources": "0", "api_key": settings.OSRM_API_KEY},
             ),
-            timeout=COMMUTE_RANK_TIMEOUT_S,
+            timeout=COMMUTE_OSRM_TIMEOUT_S,
         )
     except Exception as e:
-        logger.warning("commute: OSRM table call failed — ranking by area: %s", e)
+        logger.info("commute: OSRM unavailable (%s) — ranking by straight-line distance", e)
         return
 
     durations = (data or {}).get("durations") or [[]]
@@ -449,7 +480,7 @@ async def _compute_commute_minutes(properties: list, destination: str,
                 assigned += 1
             except (ValueError, TypeError):
                 continue
-    logger.info("commute: assigned drive time to %d/%d candidates (dest=%r)",
+    logger.info("commute: precise drive time for %d/%d candidates (dest=%r)",
                 assigned, len(targets), dest)
 
 
@@ -606,7 +637,10 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
         if commute_aware:
             # None when this property had no commute computed → match_score falls
             # back to the distance term for it (mixed windows rank consistently).
+            # Precise minutes when OSRM answered; else straight-line km (both are
+            # office-proximity — the R1 signal).
             prop_data["commute_minutes"] = p.get("_commute_min")
+            prop_data["commute_km"] = p.get("_commute_km")
         pid = p.get("p_property_id", p.get("property_id", ""))
         signals = prop_signals.get(pid, {})
         return calc_match_score(prop_data, scoring_prefs,
@@ -659,7 +693,8 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
     commute_label = ""
     if commute_dest:
         await _compute_commute_minutes(properties, commute_dest, limit=COMMUTE_RANK_TOPN)
-        if any(p.get("_commute_min") is not None for p in properties):
+        if any(p.get("_commute_min") is not None or p.get("_commute_km") is not None
+               for p in properties):
             for p in properties:
                 p["_custom_score"] = _score(p, commute_aware=True)
             properties.sort(key=lambda p: p.get("_custom_score", 0), reverse=True)
@@ -746,12 +781,18 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
             "sharing_types_list": sharing_types_struct,  # structured for the detail sheet
             "images": images_list,                       # full gallery for the detail sheet
         }
-        # R1 — carry the real commute time so the card can show "X min to <dest>".
-        # Additive: only present when a commute was actually computed this search.
-        _cmin = p.get("_commute_min")
-        if _cmin is not None and commute_label:
-            info["commute_minutes"] = _cmin
-            info["commute_label"] = commute_label
+        # R1 — carry commute proximity so the card can show it. Additive: present only
+        # when computed this search. Precise minutes (OSRM) → "X min to <dest>";
+        # straight-line km fallback → "~X.X km from <dest>" (honest, never a faked time).
+        if commute_label:
+            _cmin = p.get("_commute_min")
+            _ckm = p.get("_commute_km")
+            if _cmin is not None:
+                info["commute_minutes"] = _cmin
+                info["commute_label"] = commute_label
+            elif _ckm is not None:
+                info["commute_km"] = _ckm
+                info["commute_label"] = commute_label
         # Replace old entry for same property (dedup) or append new
         if prop_id and prop_id in _existing_idx:
             existing_map[_existing_idx[prop_id]] = info

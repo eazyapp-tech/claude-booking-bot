@@ -170,8 +170,10 @@ def match_score(
 
     Scoring components:
     - Budget match (0-30 pts)
-    - Proximity (0-25 pts): real commute minutes to the user's destination when
-      known (property_data["commute_minutes"]), else crow-flies distance (0-20)
+    - Proximity (0-25 pts): real driving minutes to the user's destination
+      (property_data["commute_minutes"]) → else straight-line km to it
+      (property_data["commute_km"]) → else crow-flies distance from the search
+      pin (0-20). The first two are office-proximity (R1); the last is the pin.
     - Amenity overlap (0-30 pts, with must-have vs nice-to-have weighting)
     - Property type match (0-10 pts)
     - Gender match (0-10 pts)
@@ -203,7 +205,9 @@ def match_score(
     # unchanged behaviour. Budget/amenities keep their weight, so commute complements
     # the score rather than overriding a clearly better-value property.
     commute_min = property_data.get("commute_minutes")
+    commute_km = property_data.get("commute_km")
     if commute_min is not None:
+        # Precise driving time to the destination (OSRM).
         cm = _parse_number(commute_min)
         if cm <= 15:
             score += 25
@@ -212,6 +216,18 @@ def match_score(
         elif cm <= 60:
             score += max(0.0, 15 - (cm - 30) * 0.5)    # 15 → 0
         # Beyond 60 min, 0 points — too far to count as proximity
+    elif commute_km is not None:
+        # Straight-line distance to the destination (honest fallback when the
+        # routing service is unavailable). Still office-proximity — the R1 signal
+        # — just measured as the crow flies instead of by road.
+        km = _parse_number(commute_km)
+        if km <= 2:
+            score += 25
+        elif km <= 5:
+            score += 25 - (km - 2) * (10.0 / 3.0)      # 25 → 15
+        elif km <= 12:
+            score += max(0.0, 15 - (km - 5) * (15.0 / 7.0))  # 15 → 0
+        # Beyond 12 km, 0 points
     else:
         distance = property_data.get("distance", property_data.get("distanceBwPropertyAndSearchArea"))
         if distance is not None:
