@@ -30,10 +30,17 @@ from db.redis_store import (
 )
 from utils.api import parse_amenities, parse_sharing_types, parse_sharing_types_structured
 from utils.geo import geocode_address
+from utils.retry import http_get
 from utils.scoring import match_score as calc_match_score, gender_compatible_listing
 
 
 SEARCH_CACHE_TTL = 900  # 15 minutes
+
+# R1 — commute-based ranking. Re-rank at most this many top (by area) candidates by
+# real driving time to the user's daily destination, in ONE OSRM matrix call. Bounds
+# the URL length / compute; properties beyond this window keep their area ranking.
+COMMUTE_RANK_TOPN = 10
+COMMUTE_RANK_TIMEOUT_S = 12  # tight: one matrix call should be fast (Instant truth)
 
 
 def _fmt_rent(raw) -> str:
@@ -83,6 +90,11 @@ def build_carousel_items(info_list, search_lat, search_lng, limit: int = 5):
         sharing = info.get("sharing_types_list")
         if sharing:
             item["sharing"] = sharing
+        # R1 — real commute label, shown on the card only when computed this search.
+        cmin = info.get("commute_minutes")
+        clabel = info.get("commute_label")
+        if cmin is not None and clabel:
+            item["commute"] = f"{int(cmin)} min to {clabel}"
         items.append(item)
 
     map_center = None
@@ -339,6 +351,108 @@ async def _enrich_top_results(properties: list, limit: int = 5) -> None:
     )
 
 
+def _short_dest_label(dest: str, max_len: int = 24) -> str:
+    """Trim a commute destination to the leading segment for card display.
+    'Reliance Corporate Park, Navi Mumbai' → 'Reliance Corporate Park'."""
+    head = (dest or "").split(",")[0].strip()
+    if len(head) > max_len:
+        head = head[: max_len - 1].rstrip() + "…"
+    return head
+
+
+def _prop_coords(p: dict) -> tuple:
+    """Pull (lat, lng) floats from a property using the same key fallbacks the
+    results loop uses (API fields → geocoded). Returns (None, None) when absent."""
+    plat = (p.get("p_latitude") or p.get("p_lat") or p.get("p_pg_latitude")
+            or p.get("latitude") or p.get("lat") or p.get("_geocoded_lat") or "")
+    plng = (p.get("p_longitude") or p.get("p_long") or p.get("p_pg_longitude")
+            or p.get("longitude") or p.get("long") or p.get("lng")
+            or p.get("_geocoded_lng") or "")
+    try:
+        if plat and plng:
+            return float(plat), float(plng)
+    except (ValueError, TypeError):
+        pass
+    return None, None
+
+
+async def _compute_commute_minutes(properties: list, destination: str,
+                                   limit: int = COMMUTE_RANK_TOPN) -> None:
+    """R1 — fill `_commute_min` (real driving minutes) for the top-N candidates.
+
+    When the user gave a daily commute destination (office/college), compute the
+    real driving time from THAT place to each top candidate in ONE OSRM table call
+    (source = destination, destinations = properties) — far cheaper than N
+    point-to-point calls. Mutates the property dicts in place.
+
+    Fully graceful by design: a vague/empty destination, a destination that won't
+    geocode, properties without coordinates, or any OSRM error simply leaves the
+    properties untouched so ranking degrades to area distance. It NEVER raises —
+    the commute term is a bonus signal, never a failure point.
+    """
+    # Reuse estimate_commute's vague-destination guard so we never geocode "office".
+    from tools.broker.landmarks import _VAGUE_DESTINATIONS
+
+    dest = (destination or "").strip()
+    if not dest or dest.lower() in _VAGUE_DESTINATIONS:
+        return
+
+    try:
+        dest_lat, dest_lng = await geocode_address(dest)
+    except Exception as e:
+        logger.warning("commute: destination geocode failed for %r: %s", dest, e)
+        return
+    if not dest_lat or not dest_lng:
+        logger.info("commute: could not geocode destination %r — ranking by area", dest)
+        return
+
+    candidates = properties[:limit]
+    # Fill in any missing property coordinates (concurrent) so commute can cover the
+    # whole window, not just the few the search API returned with coords.
+    try:
+        await _geocode_properties(candidates, limit=limit)
+    except Exception as e:
+        logger.debug("commute: candidate geocoding hiccup (continuing): %s", e)
+
+    targets = []  # (property, lat, lng)
+    for p in candidates:
+        plat, plng = _prop_coords(p)
+        if plat is not None and plng is not None:
+            targets.append((p, plat, plng))
+    if not targets:
+        logger.info("commute: no top-%d candidates have coordinates — ranking by area", limit)
+        return
+
+    # ONE OSRM table call: index 0 is the destination (source), 1..N the properties.
+    coord_str = f"{dest_lng},{dest_lat}" + "".join(
+        f";{lng},{lat}" for _, lat, lng in targets
+    )
+    try:
+        data = await asyncio.wait_for(
+            http_get(
+                f"https://maps.rentok.com/table/v1/driving/{coord_str}",
+                params={"sources": "0", "api_key": settings.OSRM_API_KEY},
+            ),
+            timeout=COMMUTE_RANK_TIMEOUT_S,
+        )
+    except Exception as e:
+        logger.warning("commute: OSRM table call failed — ranking by area: %s", e)
+        return
+
+    durations = (data or {}).get("durations") or [[]]
+    row = durations[0] if durations else []
+    assigned = 0
+    for i, (p, _, _) in enumerate(targets, start=1):
+        if i < len(row) and row[i] is not None:
+            try:
+                p["_commute_min"] = int(round(float(row[i]) / 60))
+                assigned += 1
+            except (ValueError, TypeError):
+                continue
+    logger.info("commute: assigned drive time to %d/%d candidates (dest=%r)",
+                assigned, len(targets), dest)
+
+
 async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -> str:
     prefs = get_preferences(user_id)
     if not prefs.get("location"):
@@ -481,7 +595,7 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
     # Load property outcome signals (conversion/no-show) — observably, never blind.
     prop_signals = _load_property_signals(properties)
 
-    for p in properties:
+    def _score(p: dict, commute_aware: bool = False) -> float:
         prop_data = {
             "rent": p.get("p_rent_starts_from", p.get("rent", 0)),
             "distance": p.get("p_distance", p.get("distance")),
@@ -489,9 +603,17 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
             "property_type": p.get("p_property_type", ""),
             "pg_available_for": p.get("p_pg_available_for", ""),
         }
+        if commute_aware:
+            # None when this property had no commute computed → match_score falls
+            # back to the distance term for it (mixed windows rank consistently).
+            prop_data["commute_minutes"] = p.get("_commute_min")
         pid = p.get("p_property_id", p.get("property_id", ""))
         signals = prop_signals.get(pid, {})
-        p["_custom_score"] = calc_match_score(prop_data, scoring_prefs, deal_breakers=deal_breakers, property_signals=signals)
+        return calc_match_score(prop_data, scoring_prefs,
+                                deal_breakers=deal_breakers, property_signals=signals)
+
+    for p in properties:
+        p["_custom_score"] = _score(p)
 
     # Sort by custom score (descending) to surface best matches first
     properties.sort(key=lambda p: p.get("_custom_score", 0), reverse=True)
@@ -527,6 +649,22 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
                 f"({pg_available_for}) in this area — the available options here "
                 f"are for a different gender. Want me to widen the search or try a nearby area?"
             )
+
+    # R1 — commute-based re-rank. If the user told us their daily destination
+    # (office/college), re-rank the top (bookable) candidates by REAL driving time
+    # to that place instead of crow-flies distance from the searched area. This is
+    # the marquee right-first signal. Optional: with no destination the block is
+    # skipped entirely (no extra calls), so non-commute users see UNCHANGED ranking.
+    commute_dest = (prefs.get("commute_from") or "").strip()
+    commute_label = ""
+    if commute_dest:
+        await _compute_commute_minutes(properties, commute_dest, limit=COMMUTE_RANK_TOPN)
+        if any(p.get("_commute_min") is not None for p in properties):
+            for p in properties:
+                p["_custom_score"] = _score(p, commute_aware=True)
+            properties.sort(key=lambda p: p.get("_custom_score", 0), reverse=True)
+            commute_label = _short_dest_label(commute_dest)
+            logger.info("commute re-rank applied (dest=%r)", commute_dest)
 
     # Final result set resolved (post-score, post gender hard-filter) — record
     # the real count so egress can shape honest UI (scarcity only from truth).
@@ -608,6 +746,12 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
             "sharing_types_list": sharing_types_struct,  # structured for the detail sheet
             "images": images_list,                       # full gallery for the detail sheet
         }
+        # R1 — carry the real commute time so the card can show "X min to <dest>".
+        # Additive: only present when a commute was actually computed this search.
+        _cmin = p.get("_commute_min")
+        if _cmin is not None and commute_label:
+            info["commute_minutes"] = _cmin
+            info["commute_label"] = commute_label
         # Replace old entry for same property (dedup) or append new
         if prop_id and prop_id in _existing_idx:
             existing_map[_existing_idx[prop_id]] = info
