@@ -96,9 +96,16 @@ async def initiate_kyc(user_id: str, aadhar_number: str, **kwargs) -> str:
                     "user_phone_number": phone,
                 },
             )
-            resp.raise_for_status()
+            resp_data = resp.json()
     except Exception as e:
         return f"Error initiating KYC: {str(e)}"
+
+    # The generate endpoint returns HTTP 200 even on failure, with the real
+    # outcome in the body status (mirrors verify_kyc below). Only a body
+    # status of 200 means the OTP was actually sent.
+    if resp_data.get("status") != 200:
+        reason = resp_data.get("message", "please try again in a few minutes")
+        return f"Couldn't send the OTP: {reason}. Please re-check your Aadhaar number or try again shortly."
 
     return "OTP has been sent to the mobile number linked with your Aadhaar. Please share the OTP to complete verification."
 
