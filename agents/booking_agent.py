@@ -5,10 +5,10 @@ Uses Sonnet (complex multi-step flows: KYC → Payment → Reserve).
 
 from config import settings
 from core.claude import AnthropicEngine
-from core.prompts import BOOKING_AGENT_PROMPT, format_prompt
+from core.prompts import BOOKING_AGENT_PROMPT, format_prompt, build_name_directive
 from tools.registry import get_schemas_for_agent, get_handlers_for_agent
 from core.tool_executor import ToolExecutor
-from db.redis_store import get_account_values, build_returning_user_context
+from db.redis_store import get_account_values, build_returning_user_context, get_user_name
 from utils.date import today_date, current_day
 
 
@@ -33,7 +33,7 @@ def get_config(user_id: str, language: str = "en") -> dict:
         returning_user_context=returning_user_context,
         payment_required=flags.get("PAYMENT_REQUIRED"),
         kyc_enabled=flags.get("KYC_ENABLED"),
-    )
+    ) + build_name_directive(get_user_name(user_id))
     tools = get_schemas_for_agent("booking")
     executor = ToolExecutor()
     executor.register_many(get_handlers_for_agent("booking"))

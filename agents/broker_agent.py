@@ -10,9 +10,9 @@ Supports two modes (controlled by DYNAMIC_SKILLS_ENABLED):
 from config import settings
 from core.claude import AnthropicEngine
 from core.log import get_logger
-from core.prompts import BROKER_AGENT_PROMPT, format_prompt
+from core.prompts import BROKER_AGENT_PROMPT, format_prompt, build_name_directive
 from core.tool_executor import ToolExecutor
-from db.redis_store import get_account_values, build_returning_user_context, get_property_id_for_search
+from db.redis_store import get_account_values, build_returning_user_context, get_property_id_for_search, get_user_name
 from tools.registry import get_schemas_for_agent, get_handlers_for_agent
 from utils.date import today_date, current_day
 
@@ -33,6 +33,8 @@ def get_config(user_id: str, language: str = "en", skills: list[str] | None = No
     """
     account = get_account_values(user_id)
     returning_ctx = build_returning_user_context(user_id)
+    # Personalization: appended (uncached) so the cached _base.md prefix is untouched.
+    name_directive = build_name_directive(get_user_name(user_id))
 
     # Resolve per-brand feature flags
     from db.redis_store import get_user_brand, get_effective_flags
@@ -53,7 +55,7 @@ def get_config(user_id: str, language: str = "en", skills: list[str] | None = No
 
     # ── Legacy path: monolithic prompt (feature flag OFF) ──────────────
     if not flags.get("DYNAMIC_SKILLS_ENABLED", settings.DYNAMIC_SKILLS_ENABLED):
-        system_prompt = format_prompt(BROKER_AGENT_PROMPT, **template_vars)
+        system_prompt = format_prompt(BROKER_AGENT_PROMPT, **template_vars) + name_directive
         tools = get_schemas_for_agent("broker")
         executor = ToolExecutor()
         executor.register_many(get_handlers_for_agent("broker"))
@@ -94,6 +96,8 @@ def get_config(user_id: str, language: str = "en", skills: list[str] | None = No
 
     # Build two-block prompt: base (cached) + dynamic skills (NOT cached)
     base_prompt, skill_prompt, doc_categories = build_skill_prompt("broker", skills, **template_vars)
+    # Append the name directive to the UNCACHED skill block (keeps base_prompt cacheable).
+    skill_prompt = skill_prompt + name_directive
 
     # Filter tools to match loaded skills
     tool_names = get_tools_for_skills(skills)

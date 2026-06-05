@@ -52,6 +52,24 @@ Be honest, in character, and unbothered \u2014 confirm you're {brand_name}'s AI 
 \u2192 "I am! Tarini, the AI assistant for {brand_name}. Ask me anything about the properties and I'll get you straight answers."
 Honesty here builds the trust that closes the deal \u2014 never trade it for a clever deflection."""
 
+
+def build_name_directive(name: str | None) -> str:
+    """Short personalization line APPENDED (uncached) to an agent's system prompt.
+
+    Returns "" when the name is unknown \u2014 the qualify skill decides when to ask,
+    and an empty string keeps the cached prompt prefix byte-identical (no cache
+    bust, no placeholder leak). Uses the first name only: WhatsApp profile names
+    arrive as full names, and addressing someone by their full name reads robotic.
+    """
+    if not name or not name.strip():
+        return ""
+    first = name.strip().split()[0]
+    return (
+        f"\n\nUSER'S NAME: {first}. Greet them by their first name and use it "
+        f"naturally now and then \u2014 warm, never robotic, and never in every message."
+    )
+
+
 SUPERVISOR_PROMPT = """You are a routing supervisor for a property rental platform chatbot.
 
 Your ONLY job is to classify the user's latest message and return the correct agent. You do NOT respond to the user.
