@@ -43,11 +43,11 @@ protection + the CI gate guard `main`.
 
 ## 🎯 Current focus
 
-- **Last shipped:** **R1 commute ranking** (marquee) ✅ — PRs #37 (core) + #38 (capture) + #39 (haversine fallback) + eazypg-chat #8 (card pill). **Live-verified 10/10 on real prod.**
-- **Doing next:** **C1** — `estimate_commute` fast-fail (live verify exposed it 30s-dead-airs + Haiku fabricates distances when OSRM is down). New bot-only item below.
-- **Blocked on you:** nothing urgent. New finding (OSRM infra down on prod) + 2 product decisions (E3, AV-§2) below when convenient.
+- **Last shipped:** **C1** — OSRM circuit breaker + honest straight-line fallback ✅ ([#43](https://github.com/5s10r2/claude-booking-bot/pull/43)). **Live-verified 4/4** (R1 intact via osrm_get; estimate_commute 30s dead-air eliminated — 0 new timeouts across 3 commute Qs). Preceded by **R1 commute ranking** (marquee) ✅ #37/#38/#39 + eazypg-chat#8, live 10/10.
+- **Doing next:** your call — suggested queue: **G-13 + G-20** (cheap "Real" wins, data already in payload) → **R8** (intent-tuned ranking, now unblocked).
+- **Blocked on you:** **OSRM EC2 restart** (backend/AWS — bot is correct either way now, but a restart auto-upgrades R1 to precise "X min" labels). 2 product decisions (E3, AV-§2) when convenient.
 
-> **Live finding (2026-06-05):** `maps.rentok.com` OSRM routing is timing out 30s on prod (15+/16 recent tool failures). R1 sidesteps it with an honest straight-line fallback (ranks by office proximity, labels "~X km from <dest>"; auto-upgrades to "X min" when OSRM recovers). The on-demand `estimate_commute` tool still hits the raw 30s timeout → see C1.
+> **Live finding (2026-06-05):** `maps.rentok.com` OSRM is **down at the network level** on prod (EC2 stopped/terminated — confirmed with backend; the bot is the live consumer, backend's own OSRM refs are commented out). **C1 makes the bot correct regardless:** ranks by honest straight-line proximity, skips the dead host instantly via the breaker, self-heals when the EC2 returns. On restore, confirm the bot's Render `OSRM_API_KEY` + the OSRM param name (`api_key` vs `key`) — one live commute search flips labels "~X km" → "X min".
 
 ---
 
@@ -58,7 +58,7 @@ protection + the CI gate guard `main`.
 | **B1** | Lead carries rich intent (`remarks` + `room_type`) so manager sees the *why* | Rl Gr | ✅ | [#32](https://github.com/5s10r2/claude-booking-bot/pull/32) |
 | **LAT-1** | Run image-enrich + geocode concurrently via `_enrich_top_results` (search.py). *NB: the "geocode+pg_ids" idea was invalid — pg_ids is synchronous.* | In | ✅ | [#34](https://github.com/5s10r2/claude-booking-bot/pull/34) |
 | **R1** | Rank by the user's real commute destination, not the search pin. **Highest lift. ✅ LIVE-VERIFIED 10/10.** Reuses `commute_from`; ranks top-10 by office proximity (haversine always + OSRM drive-time upgrade); card shows "X min to <dest>" or honest "~X km from <dest>"; graceful + self-heals. Absent destination → unchanged. 26/26 hermetic. | Rf Rl | ✅ | [#37](https://github.com/5s10r2/claude-booking-bot/pull/37) [#38](https://github.com/5s10r2/claude-booking-bot/pull/38) [#39](https://github.com/5s10r2/claude-booking-bot/pull/39) |
-| **C1** | `estimate_commute` fast-fail: OSRM is down on prod, so the on-demand tool 30s-dead-airs AND the broker fabricates "~8-10 km" when it times out. Tighten timeout + honest fallback (reuse R1's haversine). Bot-only. | H In Gr | ⬜ | — |
+| **C1** | OSRM circuit breaker + honest fallback. **✅ LIVE-VERIFIED 4/4.** `core/osrm.py` skips the dead host for a 10-min cooldown (no per-call timeout tax), probes for recovery, self-heals. estimate_commute/fetch_landmarks now return honest "~X km straight-line" (broker stops fabricating); R1 routed through it too. 18/18 hermetic. | H In Gr | ✅ | [#43](https://github.com/5s10r2/claude-booking-bot/pull/43) |
 | **R5** | Outcome-signal load degrades visibly (logs a warning) instead of silently blind | Rf | ✅ | [#35](https://github.com/5s10r2/claude-booking-bot/pull/35) |
 | **G-13** | Surface property lat/long (already in payload — formatting only) | Rl | ⬜ | — |
 | **G-20** | Surface support contacts (already in payload — formatting only) | Rl | ⬜ | — |
@@ -155,6 +155,7 @@ Evidence so we never re-litigate or duplicate finished work.
 | Latency | LAT-1 concurrent image + geocode enrichment | [#34](https://github.com/5s10r2/claude-booking-bot/pull/34) |
 | Ranking | R5 outcome-signal load degrades visibly, not blind-silent | [#35](https://github.com/5s10r2/claude-booking-bot/pull/35) |
 | Ranking | **R1 commute ranking** (marquee) — rank by proximity to the user's daily destination; honest "X min"/"~X km" labels; graceful + self-heals. Live-verified 10/10. | [#37](https://github.com/5s10r2/claude-booking-bot/pull/37) [#38](https://github.com/5s10r2/claude-booking-bot/pull/38) [#39](https://github.com/5s10r2/claude-booking-bot/pull/39) [chat#8](https://github.com/5s10r2/eazypg-chat/pull/8) |
+| Resilience | **C1 OSRM circuit breaker** — skip the dead routing host instantly (no 30s dead-air), honest straight-line fallback (no fabricated distances), self-heals on restore. Live-verified 4/4. | [#43](https://github.com/5s10r2/claude-booking-bot/pull/43) |
 
 ---
 
@@ -190,6 +191,18 @@ Evidence so we never re-litigate or duplicate finished work.
   honest "~X km from Powai" labels, sorted ascending. R1 ✅ shipped + verified.
   Surfaced **C1** (estimate_commute 30s dead-air + Haiku fabrication) for next.
   Hermetic suite 26/26 on test_commute_ranking.py; gate 35/35.
+- **2026-06-05 (C1)** — Backend confirmed `maps.rentok.com` OSRM is down at the
+  network level (EC2 unreachable; the booking bot is the live consumer). Shipped
+  `core/osrm.py` circuit breaker: trip-on-failure → skip for a 10-min cooldown →
+  half-open probe → self-heal; fail-open on Redis error. estimate_commute +
+  fetch_landmarks now return honest "~X km straight-line (live route timing
+  unavailable)" — gives the broker a real number so it stops fabricating "~8-10
+  km". R1 + both landmark tools routed through the one breaker; shared
+  `haversine_km` moved to utils/geo.py. **#43 shipped, live-verified 4/4**: R1
+  labels intact via osrm_get; 0 new estimate_commute 30s-timeouts across 3
+  commute Qs (was 90s of dead-air); slowest turn 16.5s (residual = Overpass
+  transit, not OSRM). test_osrm_circuit.py 18/18; test_commute_ranking 26/26.
+  Open coordination: backend restarts the OSRM EC2 → bot auto-upgrades to "X min".
 
 ---
 
