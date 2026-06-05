@@ -55,6 +55,7 @@ jobs:
             test_contract_parity.py \
             test_cross_contract.py \
             test_signals.py \
+            test_lat1_concurrent.py \
             test_ui_parts_native.py \
             test_channel_adapter.py \
             test_web_egress.py \

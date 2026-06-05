@@ -291,6 +291,19 @@ async def _enrich_with_images(properties: list, limit: int = 5) -> None:
     logger.info("image enrichment: %d/%d images found", enriched, len(targets))
 
 
+async def _enrich_top_results(properties: list, limit: int = 5) -> None:
+    """Run image enrichment and geocoding concurrently for the top results.
+
+    Both walk the same top-N properties but write disjoint keys (p_image/_images
+    vs lat/lng), so they have no ordering dependency. Overlapping them shaves the
+    slower call's latency off every search. Each function already swallows its own
+    failures, so gather never raises here."""
+    await asyncio.gather(
+        _enrich_with_images(properties, limit=limit),
+        _geocode_properties(properties, limit=limit),
+    )
+
+
 async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -> str:
     prefs = get_preferences(user_id)
     if not prefs.get("location"):
@@ -414,11 +427,9 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
 
     logger.info("found %d properties", len(properties))
 
-    # Enrich top results with images from dedicated images API
-    await _enrich_with_images(properties, limit=5)
-
-    # Geocode top properties to get lat/lng for map view
-    await _geocode_properties(properties, limit=5)
+    # Enrich top results: images + geocoding are independent I/O over the same
+    # top-N (disjoint keys), so run them concurrently instead of back-to-back.
+    await _enrich_top_results(properties, limit=5)
 
     # Re-score with custom scoring (weighted amenities + deal-breaker penalties)
     user_mem = get_user_memory(user_id)
