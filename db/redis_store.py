@@ -186,4 +186,10 @@ from db.redis import (  # noqa: F401
     idem_complete,
     idem_release,
     idem_clear,
+    # Self-serve brand accounts domain
+    get_account,
+    save_account,
+    account_exists,
+    set_email_verify_token,
+    consume_email_verify_token,
 )

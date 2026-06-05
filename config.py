@@ -76,6 +76,18 @@ class Settings(BaseSettings):
     # resolved server-side from the verified link token, falling back to this default brand.
     DEFAULT_BRAND_API_KEY: str = "OxOtel1234"
 
+    # Self-serve signup — demo brand provisioning
+    DEMO_PG_IDS: list[str] = []        # sandbox property ids a fresh signup's demo bot serves (set in env for live demo)
+    DEMO_CITIES: list[str] = ["Mumbai"]
+    DEMO_AREAS: list[str] = []
+    ADMIN_BASE_URL: str = "https://eazypg-admin.vercel.app"  # used to build the email-verification link
+    # Self-serve signup — per-IP abuse throttle (unauthenticated endpoint)
+    SIGNUP_MAX_PER_WINDOW: int = 10
+    SIGNUP_RATE_WINDOW_SECONDS: int = 3600  # 1h
+    # Per-IP login throttle — catches credential-stuffing that rotates the username
+    # (the per-username throttle alone never trips when the attacker varies emails).
+    LOGIN_IP_MAX_FAILS: int = 50
+
     # Web Intelligence
     TAVILY_API_KEY: Optional[str] = None  # Tavily search API key for web intelligence
     WEB_SEARCH_MAX_PER_CONVERSATION: int = 3  # max web searches per conversation

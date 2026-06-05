@@ -855,9 +855,27 @@ async def admin_set_flags(request: Request, brand_hash: str = Depends(require_ad
 # frontend bundle. See core/admin_login.py.
 # ---------------------------------------------------------------------------
 
+def _client_ip(request: Request) -> str:
+    """Real client IP for rate-limiting. Thin adapter over core.accounts.trusted_client_ip.
+
+    This service runs on Render (single trusted proxy), which appends the real
+    client IP as the LAST X-Forwarded-For hop. Leading hops are client-forgeable,
+    so the resolver takes the last hop, never the first. (Azure is RentOk's stack,
+    not this prototype's — there is no X-Azure-ClientIP here.)
+    """
+    from core.accounts import trusted_client_ip
+    peer = request.client.host if request.client else None
+    return trusted_client_ip(request.headers.get("X-Forwarded-For"), peer)
+
+
 @router.post("/admin/login")
 async def admin_login(request: Request):
-    from core.admin_login import verify_admin_login
+    from core.admin_login import (
+        verify_admin_login, is_throttled, _record_failure, _clear_failures,
+    )
+    from core.accounts import (
+        verify_login, login_ip_throttled, record_login_ip_failure, clear_login_ip_failures,
+    )
 
     body = await request.json()
     username = (body.get("username") or "").strip()
@@ -865,8 +883,25 @@ async def admin_login(request: Request):
     if not username or not password:
         raise HTTPException(status_code=400, detail="username and password are required")
 
-    api_key, reason = verify_admin_login(username, password)
+    # Two throttles: per-username (targeted guessing) AND per-IP (credential
+    # stuffing that rotates the email so the username counter never trips).
+    ip = _client_ip(request)
+    if is_throttled(username) or login_ip_throttled(ip):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+
+    # Self-serve accounts first (username == email). Only fall back to the legacy
+    # env credential when the account is genuinely not found / wrong password
+    # ("invalid") — a correct account whose brand is mis-provisioned must surface
+    # as "misconfigured", not be masked behind the legacy 401.
+    api_key, reason = verify_login(username, password)
+    consulted_legacy = False
+    if reason == "invalid":
+        consulted_legacy = True
+        api_key, reason = verify_admin_login(username, password)
+
     if reason == "ok":
+        _clear_failures(username)
+        clear_login_ip_failures(ip)
         return {"api_key": api_key}
     if reason == "unconfigured":
         raise HTTPException(status_code=503, detail="Admin login is not configured")
@@ -874,7 +909,55 @@ async def admin_login(request: Request):
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
     if reason == "misconfigured":
         raise HTTPException(status_code=503, detail="Admin login misconfigured")
+    # legacy verify_admin_login records its own per-username failure; only count the
+    # account path there. The per-IP counter is recorded for every failure.
+    if not consulted_legacy:
+        _record_failure(username)
+    record_login_ip_failure(ip)
     raise HTTPException(status_code=401, detail="Invalid username or password")
+
+
+@router.post("/admin/signup")
+async def admin_signup(request: Request):
+    from core.accounts import signup, send_verification_email, check_signup_rate
+
+    client_ip = _client_ip(request)
+    if not check_signup_rate(client_ip):
+        raise HTTPException(status_code=429, detail="Too many signups from this network. Try again later.")
+
+    body = await request.json()
+    email = (body.get("email") or "").strip()
+    password = body.get("password") or ""
+    brand_name = (body.get("brand_name") or "").strip()
+
+    result, reason = signup(email, password, brand_name)
+    if reason == "ok":
+        send_verification_email(result["email"], result["verify_token"])
+        # Return the api_key so the panel logs straight into the demo.
+        return {
+            "status": 200,
+            "api_key": result["api_key"],
+            "brand_link_token": result["brand_link_token"],
+            "email_verified": False,
+        }
+    if reason == "exists":
+        raise HTTPException(status_code=409, detail="An account with this email already exists.")
+    if reason.startswith("invalid:"):
+        raise HTTPException(status_code=400, detail=reason.split("invalid:", 1)[1])
+    raise HTTPException(status_code=400, detail="Signup failed.")
+
+
+@router.post("/admin/verify-email")
+async def admin_verify_email(request: Request):
+    from core.accounts import verify_email
+
+    body = await request.json()
+    token = (body.get("token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token is required")
+    if verify_email(token):
+        return {"status": 200, "verified": True}
+    raise HTTPException(status_code=400, detail="Invalid or expired verification link.")
 
 
 # ---------------------------------------------------------------------------

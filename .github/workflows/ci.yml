@@ -62,7 +62,8 @@ jobs:
             test_presentation_polish.py \
             test_contract_fixtures.py \
             test_carousel_contract.py \
-            test_show_more_native.py; do
+            test_show_more_native.py \
+            test_accounts_signup.py; do
             echo "::group::$t"
             python "$t"
             echo "::endgroup::"
