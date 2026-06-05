@@ -1,0 +1,167 @@
+# Top-1% Bot — Master Tracker
+
+**The single source of truth for the EazyPG booking-bot quality engagement.**
+Owner: Sanchay (PO) + Claude (driver). Started 2026-06-05.
+
+> **READ THIS FIRST every session.** Before any new work: open this doc, find the
+> current focus, check the Done Ledger so we never redo shipped work, pick the next
+> open item in order. Update it the moment anything ships. This is how we stay on
+> one track across sessions and never drift, duplicate, or lose the thread.
+
+---
+
+## What "done" means — the 5-truth bar
+
+A top-1% booking agent is one where all five hold. Every item below is tagged with
+the truth(s) it serves.
+
+| Tag | Truth | Plain meaning |
+|---|---|---|
+| **H** | Honest | Every outcome it claims is actually true. No silent success on failure. |
+| **Rl** | Real | Every booking/lead/token it captures reaches the human who fulfills it. |
+| **Rf** | Right-first | It surfaces the best-fit option first, on real data. |
+| **In** | Instant | It streams, never dead-airs. 4s of silence = dead. |
+| **Gr** | Graceful | It recovers from errors and never fabricates to cover a gap. |
+
+---
+
+## How we sequence
+
+1. **Phase 1 — Bot-only.** Ship purely in the bot repo. Zero backend dependency.
+   Low blast radius. **We are here.**
+2. **Phase 2 — Paired (bot half).** Build the bot's half of a paired change ahead
+   of the backend, behind the consumption point. Activate when the backend lands.
+3. **Phase 3 — Backend / live prod.** `rentok-backend` is live production for every
+   manager. Bigger blast radius. We touch it last, with specs you approve.
+
+**Cadence:** one PR per item; **you merge** (you hold the prod trigger). Branch
+protection + the CI gate guard `main`.
+
+**Status legend:** ⬜ open · ⏳ in PR / in review · ✅ shipped to main · ⏸ parked · 🔵 needs your decision
+
+---
+
+## 🎯 Current focus
+
+- **Last shipped:** B1 warm-lead handoff → PR #32 (⏳ awaiting your merge).
+- **Doing next:** Latency micro-win (gather image + geocode) → then **R1 commute ranking** (marquee; brainstorm-first).
+- **Blocked on you:** merge PR #32; 2 product decisions flagged below (E3, AV-§2) — not urgent.
+
+---
+
+## Phase 1 — Bot-only (do these first)
+
+| ID | Item | Truth | Status | PR |
+|---|---|---|---|---|
+| **B1** | Lead carries rich intent (`remarks` + `room_type`) so manager sees the *why* | Rl Gr | ⏳ | [#32](https://github.com/5s10r2/claude-booking-bot/pull/32) |
+| **LAT-1** | Run `_enrich_with_images` + `_geocode_properties` concurrently (search.py:418/421). *NB: the "geocode+pg_ids" idea is invalid — pg_ids is synchronous.* | In | ⬜ | — |
+| **R1** | Rank by the user's real commute origin, not the search pin. Signal captured & wasted today. **Highest lift.** Brainstorm-first. | Rf Rl | ⬜ | — |
+| **R5** | Outcome-signal lookup stops silently swallowing exceptions; tighten the learning loop | Rf | ⬜ | — |
+| **G-13** | Surface property lat/long (already in payload — formatting only) | Rl | ⬜ | — |
+| **G-20** | Surface support contacts (already in payload — formatting only) | Rl | ⬜ | — |
+| **P1.7** | KYC generate-failure no longer reported as false success | H | ⏳ | [#30](https://github.com/5s10r2/claude-booking-bot/pull/30) |
+| **R8** | Intent-tuned ranking weight profiles per user. **Do after R1 + R5.** | Rf | ⬜ | — |
+
+---
+
+## Phase 2 — Paired (build the bot half ahead, activate on backend)
+
+| ID | Item | Truth | Status | Notes |
+|---|---|---|---|---|
+| **A1/G-1/G-2/G-7** | Availability + per-sharing price contract: formatter, cache fallback, tool schema carrying `is_available` / `available_from` / `vacant_beds` / `rent_per_bed` | Rl Rf | ⬜ | Consume the moment the availability endpoint lands |
+| **E2** | Image guarantee — filter to `images_present=true` now; cover-first ordering + CDN sizing waits on backend | Rl | ⬜ | Bot half shippable now |
+| **E4** | Honest empty-vs-error message branch (bot half largely done; backend must signal the two distinctly) | H Gr | ⬜ | |
+| **E6** | Quote one authoritative price field once backend names it | H | ⬜ | |
+| **R2/R3** | Vacancy-count scoring + move-in-date vs `next_available_from` validation | Rf | ⬜ | Consumes availability endpoint |
+| **R6** | Quality/trust term in score (photos, completeness, rating, verified) | Rf | ⬜ | Rides backend trust projection |
+| **A2** | Feed `PropertyNearby` JSONB into the commute tool | Rf | ⬜ | |
+| **A3** | Food-menu tool + formatting against proposed endpoint | Rl | ⬜ | |
+| **A4** | Surface trust signals (`is_verified`, certificates, tenant count) | Rl | ⬜ | |
+| **A5** | True move-in cost (deposit + add-ons + included) quoting logic | Rl H | ⬜ | |
+| **A7/R4** | Amenity scoring free-text → structured enum mapping | Rf | ⬜ | |
+| **P0.1** | Stop optimistic `addPayment`; consume only a verified result | H Rl | ⬜ | Bot consumption path; backend verifies |
+| **P0.2** | Drop raw Aadhaar PII transit through the bot | H | ⬜ | Ready to drop when backend stops sending |
+| **P0.3** | Inject brand-scoped token on every RentOk call | Rl | ⬜ | Backend enforces later |
+| **P1.5** | Call explicit KYC `POST .../init` (read/write split) | H | ⬜ | |
+| **P2.1** | Surface reservation "expires at X" | Gr | ⬜ | |
+| **P2.3** | Bot-side shortlist dedup-on-append | Rf | ⬜ | |
+| **P2.5** | limit/offset params + page-through in bot client | In | ⬜ | |
+| **B2** | Reason-aware KYC guidance once backend returns a reason | Gr | ⬜ | |
+
+---
+
+## Phase 3 — Backend / live prod (last; specs you approve)
+
+| ID | Item | Truth | Status | PR |
+|---|---|---|---|---|
+| **SILO** | **THE true P0.** Bot bookings/leads/token reach the manager + notifications fire. A booking nobody's told about = broken first impression. | Rl | ⬜ | — |
+| **P0.1** | Payment gateway verification before recording token | H Rl | ⬜ | — |
+| **P0.2** | Stop returning raw Aadhaar PII to the bot | H | ⬜ | — |
+| **P0.3** | Auth / brand isolation on `/bookingBot/*` | Rl | ⬜ | — |
+| **P0.4** | Gate test-Aadhaar numbers behind non-prod | H | ⬜ | — |
+| **P0.5** | KYC gateway Cashfree → QuickEkyc | Gr | ⏳ | backend [#5868](https://github.com/eazyapp-tech/rentok-backend/pull/5868) |
+| **P1.1** | `cancel-booking` honest status (not always 200) | H | ⬜ | — |
+| **P1.2** | `update-booking` existence check + honest record | H | ⬜ | — |
+| **P1.4** | `update-kyc` honest status | H | ⬜ | — |
+| **P1.6** | Lead race fix + 409 on duplicate | Rl | ⬜ | — |
+| **AV-§1** | **Availability endpoint** — per-room vacancy + `next_available_from` (unblocks A1/R2/R3) | Rl Rf | ⬜ | — |
+| **AV-§3a** | Public-safe `property-details-bots` projection (strip PII/internal cols) | H | ⬜ | — |
+| **T1** | Token lifecycle (real advance, refund/adjust path) | Rl | ⬜ | — |
+| **T2** | Identity dedup (lead → tenant by phone) | Rl | ⬜ | — |
+| **T3** | Consent + audit before KYC (DPDP) | H | ⬜ | — |
+| **T4** | Reservation atomic hold (no double-booking) | Rl | ⬜ | — |
+| **A6** | Numeric ratings + aggregate | Rf | ⬜ | — |
+| **A8** | Per-property offers | Rl | ⏸ | parked |
+| **R7** | Pagination + precomputed distance (latency) | In | ⬜ | — |
+
+---
+
+## 🔵 Decisions needed from you (not blocking now)
+
+| ID | Decision | Why it matters |
+|---|---|---|
+| **E3** | Translate property content **on-the-fly** (bot-only) vs **stored translations** (backend)? | Bot speaks Hindi/Marathi; property content is English. Fork determines ownership. |
+| **AV-§2** | Does a `status=2` (booked-not-onboarded) bed count as **available**? | Inventory-policy product call; shapes the availability endpoint + honest scarcity. |
+
+---
+
+## ✅ Done Ledger — do NOT redo (shipped to `main`)
+
+Evidence so we never re-litigate or duplicate finished work.
+
+| Area | What | PR |
+|---|---|---|
+| Honesty | Success-on-failure across write tools (booking/visit/call/reserve) | [#21](https://github.com/5s10r2/claude-booking-bot/pull/21) |
+| Honesty | Wave A "stop lying" — `user_error()`, no fabricated outcomes | [#5](https://github.com/5s10r2/claude-booking-bot/pull/5) |
+| Honesty | Phase 0 trust — AI disclosure, killed fabricated facts, grounded scarcity | [#8](https://github.com/5s10r2/claude-booking-bot/pull/8) |
+| Honesty | Empty-vs-error honesty in search (None=error vs []=empty) | baseline |
+| Relevance | Gender hard-constraint filter (post-score exclude) | [#10](https://github.com/5s10r2/claude-booking-bot/pull/10) |
+| Relevance | Gender NAME-vs-TAG fix (girls-only-named on boys search) | [#27](https://github.com/5s10r2/claude-booking-bot/pull/27) |
+| Relevance | Broker search-first (stop re-asking amenities) | [#11](https://github.com/5s10r2/claude-booking-bot/pull/11) |
+| Contract | Shortlist contract (inner status:200) | [#12](https://github.com/5s10r2/claude-booking-bot/pull/12) |
+| Contract | Rentok API contract alignment (room-details POST, lead_source) | [#6](https://github.com/5s10r2/claude-booking-bot/pull/6) |
+| Rendering | Native property carousel supersedes scraper (P4) | [#23](https://github.com/5s10r2/claude-booking-bot/pull/23) |
+| Rendering | Native show-more pagination | [#26](https://github.com/5s10r2/claude-booking-bot/pull/26) |
+| Rendering | Comparison scraper deleted (native only) | [#29](https://github.com/5s10r2/claude-booking-bot/pull/29) |
+| Language | Script-mirroring (reply in user's script) | [#22](https://github.com/5s10r2/claude-booking-bot/pull/22) |
+| Routing | Classify robustness + last_agent TTL | [#24](https://github.com/5s10r2/claude-booking-bot/pull/24) |
+| KB | pgvector codec fix | [#25](https://github.com/5s10r2/claude-booking-bot/pull/25) |
+| UX | Chat redesign backend re-land D1–D6 (native units) | main `bd1a4a2` |
+| Security | Waves 1–3 (tenant isolation, HMAC, untrusted-content fencing, tool boundary) | [#3](https://github.com/5s10r2/claude-booking-bot/pull/3), [#4](https://github.com/5s10r2/claude-booking-bot/pull/4) |
+
+---
+
+## Session log (append-only)
+
+- **2026-06-05** — Engagement kickoff. Aligned on 5-truth bar + bot-first sequencing.
+  Ran cross-repo audit (reconciled roadmap vs real code; caught two wrong agent
+  assumptions: pg_ids is sync; `remarks` is not a no-op). Shipped **B1** → PR #32
+  (CI green locally, awaiting merge). Created this tracker.
+
+---
+
+## Source inputs (not trackers — context only)
+
+- Roadmap umbrella: `rentok-backend/docs/booking-bot-upgrade-roadmap.md` (+ per-workstream detail docs)
+- Narrative session memory: `~/.claude/projects/-Users-eazypg-CC-Booking-Bot-FInal/memory/MEMORY.md`
+- Codebase map: `claude-booking-bot/CLAUDE.md`
