@@ -43,9 +43,9 @@ protection + the CI gate guard `main`.
 
 ## 🎯 Current focus
 
-- **Last shipped:** B1 warm-lead handoff → PR #32 (⏳ awaiting your merge).
-- **Doing next:** Latency micro-win (gather image + geocode) → then **R1 commute ranking** (marquee; brainstorm-first).
-- **Blocked on you:** merge PR #32; 2 product decisions flagged below (E3, AV-§2) — not urgent.
+- **Last shipped:** R5 signal robustness → PR #35 ✅ merged. (Today also: B1 #32, LAT-1 #34, tracker #33 — all ✅ on main, deploying.)
+- **Doing next:** **R1 commute ranking** (marquee) — design locked (capture = ask-once-optional); gets a dedicated focused pass with live validation, not an end-of-session cram.
+- **Blocked on you:** nothing urgent. 2 product decisions flagged below (E3, AV-§2) when convenient.
 
 ---
 
@@ -53,10 +53,10 @@ protection + the CI gate guard `main`.
 
 | ID | Item | Truth | Status | PR |
 |---|---|---|---|---|
-| **B1** | Lead carries rich intent (`remarks` + `room_type`) so manager sees the *why* | Rl Gr | ⏳ | [#32](https://github.com/5s10r2/claude-booking-bot/pull/32) |
-| **LAT-1** | Run `_enrich_with_images` + `_geocode_properties` concurrently (search.py:418/421). *NB: the "geocode+pg_ids" idea is invalid — pg_ids is synchronous.* | In | ⬜ | — |
-| **R1** | Rank by the user's real commute origin, not the search pin. Signal captured & wasted today. **Highest lift.** Brainstorm-first. | Rf Rl | ⬜ | — |
-| **R5** | Outcome-signal lookup stops silently swallowing exceptions; tighten the learning loop | Rf | ⬜ | — |
+| **B1** | Lead carries rich intent (`remarks` + `room_type`) so manager sees the *why* | Rl Gr | ✅ | [#32](https://github.com/5s10r2/claude-booking-bot/pull/32) |
+| **LAT-1** | Run image-enrich + geocode concurrently via `_enrich_top_results` (search.py). *NB: the "geocode+pg_ids" idea was invalid — pg_ids is synchronous.* | In | ✅ | [#34](https://github.com/5s10r2/claude-booking-bot/pull/34) |
+| **R1** | Rank by the user's real commute origin, not the search pin. **Highest lift.** Design locked: capture = ask-once-optional. **Next, dedicated pass.** | Rf Rl | ⬜ | — |
+| **R5** | Outcome-signal load degrades visibly (logs a warning) instead of silently blind | Rf | ✅ | [#35](https://github.com/5s10r2/claude-booking-bot/pull/35) |
 | **G-13** | Surface property lat/long (already in payload — formatting only) | Rl | ⬜ | — |
 | **G-20** | Surface support contacts (already in payload — formatting only) | Rl | ⬜ | — |
 | **P1.7** | KYC generate-failure no longer reported as false success | H | ⏳ | [#30](https://github.com/5s10r2/claude-booking-bot/pull/30) |
@@ -148,6 +148,9 @@ Evidence so we never re-litigate or duplicate finished work.
 | KB | pgvector codec fix | [#25](https://github.com/5s10r2/claude-booking-bot/pull/25) |
 | UX | Chat redesign backend re-land D1–D6 (native units) | main `bd1a4a2` |
 | Security | Waves 1–3 (tenant isolation, HMAC, untrusted-content fencing, tool boundary) | [#3](https://github.com/5s10r2/claude-booking-bot/pull/3), [#4](https://github.com/5s10r2/claude-booking-bot/pull/4) |
+| Leads | B1 warm-lead handoff — rich `remarks` + `room_type` to the manager | [#32](https://github.com/5s10r2/claude-booking-bot/pull/32) |
+| Latency | LAT-1 concurrent image + geocode enrichment | [#34](https://github.com/5s10r2/claude-booking-bot/pull/34) |
+| Ranking | R5 outcome-signal load degrades visibly, not blind-silent | [#35](https://github.com/5s10r2/claude-booking-bot/pull/35) |
 
 ---
 
@@ -155,8 +158,10 @@ Evidence so we never re-litigate or duplicate finished work.
 
 - **2026-06-05** — Engagement kickoff. Aligned on 5-truth bar + bot-first sequencing.
   Ran cross-repo audit (reconciled roadmap vs real code; caught two wrong agent
-  assumptions: pg_ids is sync; `remarks` is not a no-op). Shipped **B1** → PR #32
-  (CI green locally, awaiting merge). Created this tracker.
+  assumptions: pg_ids is sync; `remarks` is not a no-op). Created this tracker.
+  **Shipped to main this session:** B1 (#32), LAT-1 (#34), R5 (#35), tracker (#33) —
+  4 merges, gate 34/34 green. R1 design locked (capture = ask-once-optional);
+  held for a dedicated focused pass (ranking core — don't cram, per the P4 lesson).
 
 ---
 
