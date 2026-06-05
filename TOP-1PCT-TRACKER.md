@@ -43,9 +43,11 @@ protection + the CI gate guard `main`.
 
 ## 🎯 Current focus
 
-- **Last shipped:** R5 signal robustness → PR #35 ✅ merged. (B1 #32, LAT-1 #34, tracker #33/#36 — all ✅ on main.)
-- **Doing now:** **R1 commute ranking** (marquee) — built + tested (18/18), in PR; live-verifying re-rank before merge. Reuses existing `commute_from` pref (no new field). FE pill = companion PR in eazypg-chat.
-- **Blocked on you:** nothing urgent. 2 product decisions flagged below (E3, AV-§2) when convenient.
+- **Last shipped:** **R1 commute ranking** (marquee) ✅ — PRs #37 (core) + #38 (capture) + #39 (haversine fallback) + eazypg-chat #8 (card pill). **Live-verified 10/10 on real prod.**
+- **Doing next:** **C1** — `estimate_commute` fast-fail (live verify exposed it 30s-dead-airs + Haiku fabricates distances when OSRM is down). New bot-only item below.
+- **Blocked on you:** nothing urgent. New finding (OSRM infra down on prod) + 2 product decisions (E3, AV-§2) below when convenient.
+
+> **Live finding (2026-06-05):** `maps.rentok.com` OSRM routing is timing out 30s on prod (15+/16 recent tool failures). R1 sidesteps it with an honest straight-line fallback (ranks by office proximity, labels "~X km from <dest>"; auto-upgrades to "X min" when OSRM recovers). The on-demand `estimate_commute` tool still hits the raw 30s timeout → see C1.
 
 ---
 
@@ -55,7 +57,8 @@ protection + the CI gate guard `main`.
 |---|---|---|---|---|
 | **B1** | Lead carries rich intent (`remarks` + `room_type`) so manager sees the *why* | Rl Gr | ✅ | [#32](https://github.com/5s10r2/claude-booking-bot/pull/32) |
 | **LAT-1** | Run image-enrich + geocode concurrently via `_enrich_top_results` (search.py). *NB: the "geocode+pg_ids" idea was invalid — pg_ids is synchronous.* | In | ✅ | [#34](https://github.com/5s10r2/claude-booking-bot/pull/34) |
-| **R1** | Rank by the user's real commute origin, not the search pin. **Highest lift.** Built: reuses `commute_from` pref; ONE OSRM matrix call re-ranks top-10 by real drive time; graded commute term replaces distance only when known (complements budget/amenities); card shows "X min to <dest>". Graceful (any failure → area ranking). 18/18 hermetic. | Rf Rl | ⏳ | in PR |
+| **R1** | Rank by the user's real commute destination, not the search pin. **Highest lift. ✅ LIVE-VERIFIED 10/10.** Reuses `commute_from`; ranks top-10 by office proximity (haversine always + OSRM drive-time upgrade); card shows "X min to <dest>" or honest "~X km from <dest>"; graceful + self-heals. Absent destination → unchanged. 26/26 hermetic. | Rf Rl | ✅ | [#37](https://github.com/5s10r2/claude-booking-bot/pull/37) [#38](https://github.com/5s10r2/claude-booking-bot/pull/38) [#39](https://github.com/5s10r2/claude-booking-bot/pull/39) |
+| **C1** | `estimate_commute` fast-fail: OSRM is down on prod, so the on-demand tool 30s-dead-airs AND the broker fabricates "~8-10 km" when it times out. Tighten timeout + honest fallback (reuse R1's haversine). Bot-only. | H In Gr | ⬜ | — |
 | **R5** | Outcome-signal load degrades visibly (logs a warning) instead of silently blind | Rf | ✅ | [#35](https://github.com/5s10r2/claude-booking-bot/pull/35) |
 | **G-13** | Surface property lat/long (already in payload — formatting only) | Rl | ⬜ | — |
 | **G-20** | Surface support contacts (already in payload — formatting only) | Rl | ⬜ | — |
@@ -151,6 +154,7 @@ Evidence so we never re-litigate or duplicate finished work.
 | Leads | B1 warm-lead handoff — rich `remarks` + `room_type` to the manager | [#32](https://github.com/5s10r2/claude-booking-bot/pull/32) |
 | Latency | LAT-1 concurrent image + geocode enrichment | [#34](https://github.com/5s10r2/claude-booking-bot/pull/34) |
 | Ranking | R5 outcome-signal load degrades visibly, not blind-silent | [#35](https://github.com/5s10r2/claude-booking-bot/pull/35) |
+| Ranking | **R1 commute ranking** (marquee) — rank by proximity to the user's daily destination; honest "X min"/"~X km" labels; graceful + self-heals. Live-verified 10/10. | [#37](https://github.com/5s10r2/claude-booking-bot/pull/37) [#38](https://github.com/5s10r2/claude-booking-bot/pull/38) [#39](https://github.com/5s10r2/claude-booking-bot/pull/39) [chat#8](https://github.com/5s10r2/eazypg-chat/pull/8) |
 
 ---
 
@@ -166,13 +170,26 @@ Evidence so we never re-litigate or duplicate finished work.
   `commute_from` ALREADY exists as a captured-but-unused pref (RENTOK_API.md:1016
   "❌ Not sent") — so R1 REUSES it, no new `commute_to` field. Built one cohesive
   backend change: capture nudge (qualify_new.md post-results, ask-once optional,
-  search-first preserved) → compute (`_compute_commute_minutes`: ONE OSRM table
-  call dest→top-10, graceful on every failure) → blend (scoring.py commute term
-  REPLACES distance only when known; budget/amenity keep weight = complement) →
-  surface (card "X min to <dest>"). TDD: test_commute_ranking.py 18/18, full
-  hermetic suite 35/35 green, registered in ci.yml. Companion FE PR (eazypg-chat):
-  accented commute pill on the card, 247+3 vitest green. Live re-rank verification
-  pending before merge.
+  search-first preserved) → compute (`_compute_commute_minutes`) → blend
+  (scoring.py commute term REPLACES distance only when known; budget/amenity keep
+  weight = complement) → surface (card label). Companion FE PR (eazypg-chat #8):
+  accented commute pill. **#37 shipped** (18/18 hermetic, gate 35/35).
+- **2026-06-05 (R1 LIVE-VERIFY → 2 fast-follows)** — Live prod smoke caught two
+  things offline tests can't: (1) the broker followed the OLD "swap location to
+  the commute point" workaround instead of saving `commute_from` (read prefs back
+  via admin API to confirm — it was absent). Fixed prompt steering in **#38**
+  (commute.md + prompts.py: save `commute_from`, KEEP location, backend ranks).
+  (2) `maps.rentok.com` OSRM is timing out 30s on prod (15+/16 tool failures),
+  so the precise-drive-time path produced nothing. **#39** added an honest
+  straight-line (haversine) fallback: ALWAYS rank by office proximity (instant,
+  infra-free), UPGRADE to OSRM minutes when the service responds; label "X min"
+  or honest "~X km from <dest>"; never a faked time; self-heals. Re-smoke after
+  each deploy via the admin-prefs read + carousel-label check. **Final live
+  smoke: 10/10** — area-only unchanged (no commute_from, no labels); commute
+  search re-ranks by proximity (Ghatkopar 4km #1 vs area-top Mass Metropolis),
+  honest "~X km from Powai" labels, sorted ascending. R1 ✅ shipped + verified.
+  Surfaced **C1** (estimate_commute 30s dead-air + Haiku fabrication) for next.
+  Hermetic suite 26/26 on test_commute_ranking.py; gate 35/35.
 
 ---
 
