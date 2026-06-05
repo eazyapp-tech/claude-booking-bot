@@ -1,3 +1,5 @@
+import asyncio
+
 from config import settings
 from core.log import get_logger
 from db.redis_store import (
@@ -17,6 +19,14 @@ from utils.properties import find_property as _find_property
 from utils.retry import http_get, http_post
 
 logger = get_logger("tools.payment")
+
+# A brand-new tenant's CRM lead is not immediately resolvable to a tenant_uuid:
+# get-tenant_uuid can return empty for a second or two right after the lead is
+# created. Without a retry, a FIRST-time reservation fails the payment link (the
+# tenant exists on the next attempt). Retry a few times with a short backoff,
+# kept well under the 30s per-tool ceiling (core.tool_boundary.TOOL_TIMEOUT_SECONDS).
+_UUID_RETRIES = 3
+_UUID_RETRY_DELAY = 1.5  # seconds between retries → ≤4.5s added latency
 
 CREATE_PAYMENT_LINK_SCHEMA = {
     "name": "create_payment_link",
@@ -73,7 +83,10 @@ async def create_payment_link(user_id: str, property_name: str, **kwargs) -> str
     except (RentokAPIError, Exception) as e:
         logger.warning("tenant UUID fetch failed for user=%s eazypg_id=%s: %s", user_id, eazypg_id, e)
 
-    # If no UUID yet, create a lead first then retry
+    # If no UUID yet, create a lead first, then poll for the tenant_uuid. The
+    # CRM is not read-after-write consistent here, so one immediate re-fetch
+    # often still returns empty for a brand-new tenant — retry with a short
+    # backoff instead of giving up on the user's first reservation.
     if not tenant_uuid:
         try:
             from tools.booking.schedule_visit import _create_external_lead
@@ -81,16 +94,28 @@ async def create_payment_link(user_id: str, property_name: str, **kwargs) -> str
             await _create_external_lead(
                 user_id, eazypg_id, pg_id, pg_number, "", "", "",
             )
-            uuid_data = await http_get(
-                f"{settings.RENTOK_API_BASE_URL}/tenant/get-tenant_uuid",
-                params={"phone": phone, "eazypg_id": eazypg_id},
-            )
-            tenant_uuid = uuid_data.get("data", {}).get("tenant_uuid", "")
         except Exception as e2:
             return user_error("generate the payment link", e2, logger=logger)
 
+        for _attempt in range(_UUID_RETRIES):
+            await asyncio.sleep(_UUID_RETRY_DELAY)
+            try:
+                uuid_data = await http_get(
+                    f"{settings.RENTOK_API_BASE_URL}/tenant/get-tenant_uuid",
+                    params={"phone": phone, "eazypg_id": eazypg_id},
+                )
+                tenant_uuid = uuid_data.get("data", {}).get("tenant_uuid", "")
+            except Exception as e3:
+                logger.warning(
+                    "tenant UUID retry %d/%d failed for user=%s: %s",
+                    _attempt + 1, _UUID_RETRIES, user_id, e3,
+                )
+                continue
+            if tenant_uuid:
+                break
+
     if not tenant_uuid:
-        return "Could not generate payment link. Please try again."
+        return "Could not generate payment link. Please try again in a moment."
 
     # Generate payment link
     try:
