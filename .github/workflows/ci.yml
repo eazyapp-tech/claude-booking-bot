@@ -67,7 +67,8 @@ jobs:
             test_show_more_native.py \
             test_lead_enrichment.py \
             test_commute_ranking.py \
-            test_accounts_signup.py; do
+            test_accounts_signup.py \
+            test_kyc_honesty.py; do
             echo "::group::$t"
             python "$t"
             echo "::endgroup::"
