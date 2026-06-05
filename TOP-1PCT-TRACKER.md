@@ -43,8 +43,8 @@ protection + the CI gate guard `main`.
 
 ## 🎯 Current focus
 
-- **Last shipped:** R5 signal robustness → PR #35 ✅ merged. (Today also: B1 #32, LAT-1 #34, tracker #33 — all ✅ on main, deploying.)
-- **Doing next:** **R1 commute ranking** (marquee) — design locked (capture = ask-once-optional); gets a dedicated focused pass with live validation, not an end-of-session cram.
+- **Last shipped:** R5 signal robustness → PR #35 ✅ merged. (B1 #32, LAT-1 #34, tracker #33/#36 — all ✅ on main.)
+- **Doing now:** **R1 commute ranking** (marquee) — built + tested (18/18), in PR; live-verifying re-rank before merge. Reuses existing `commute_from` pref (no new field). FE pill = companion PR in eazypg-chat.
 - **Blocked on you:** nothing urgent. 2 product decisions flagged below (E3, AV-§2) when convenient.
 
 ---
@@ -55,7 +55,7 @@ protection + the CI gate guard `main`.
 |---|---|---|---|---|
 | **B1** | Lead carries rich intent (`remarks` + `room_type`) so manager sees the *why* | Rl Gr | ✅ | [#32](https://github.com/5s10r2/claude-booking-bot/pull/32) |
 | **LAT-1** | Run image-enrich + geocode concurrently via `_enrich_top_results` (search.py). *NB: the "geocode+pg_ids" idea was invalid — pg_ids is synchronous.* | In | ✅ | [#34](https://github.com/5s10r2/claude-booking-bot/pull/34) |
-| **R1** | Rank by the user's real commute origin, not the search pin. **Highest lift.** Design locked: capture = ask-once-optional. **Next, dedicated pass.** | Rf Rl | ⬜ | — |
+| **R1** | Rank by the user's real commute origin, not the search pin. **Highest lift.** Built: reuses `commute_from` pref; ONE OSRM matrix call re-ranks top-10 by real drive time; graded commute term replaces distance only when known (complements budget/amenities); card shows "X min to <dest>". Graceful (any failure → area ranking). 18/18 hermetic. | Rf Rl | ⏳ | in PR |
 | **R5** | Outcome-signal load degrades visibly (logs a warning) instead of silently blind | Rf | ✅ | [#35](https://github.com/5s10r2/claude-booking-bot/pull/35) |
 | **G-13** | Surface property lat/long (already in payload — formatting only) | Rl | ⬜ | — |
 | **G-20** | Surface support contacts (already in payload — formatting only) | Rl | ⬜ | — |
@@ -162,6 +162,17 @@ Evidence so we never re-litigate or duplicate finished work.
   **Shipped to main this session:** B1 (#32), LAT-1 (#34), R5 (#35), tracker (#33) —
   4 merges, gate 34/34 green. R1 design locked (capture = ask-once-optional);
   held for a dedicated focused pass (ranking core — don't cram, per the P4 lesson).
+- **2026-06-05 (R1 pass)** — Verify-first read of the ranking core caught that
+  `commute_from` ALREADY exists as a captured-but-unused pref (RENTOK_API.md:1016
+  "❌ Not sent") — so R1 REUSES it, no new `commute_to` field. Built one cohesive
+  backend change: capture nudge (qualify_new.md post-results, ask-once optional,
+  search-first preserved) → compute (`_compute_commute_minutes`: ONE OSRM table
+  call dest→top-10, graceful on every failure) → blend (scoring.py commute term
+  REPLACES distance only when known; budget/amenity keep weight = complement) →
+  surface (card "X min to <dest>"). TDD: test_commute_ranking.py 18/18, full
+  hermetic suite 35/35 green, registered in ci.yml. Companion FE PR (eazypg-chat):
+  accented commute pill on the card, 247+3 vitest green. Live re-rank verification
+  pending before merge.
 
 ---
 

@@ -170,7 +170,8 @@ def match_score(
 
     Scoring components:
     - Budget match (0-30 pts)
-    - Location proximity (0-20 pts via distance if available)
+    - Proximity (0-25 pts): real commute minutes to the user's destination when
+      known (property_data["commute_minutes"]), else crow-flies distance (0-20)
     - Amenity overlap (0-30 pts, with must-have vs nice-to-have weighting)
     - Property type match (0-10 pts)
     - Gender match (0-10 pts)
@@ -194,17 +195,34 @@ def match_score(
             diff_pct = (prop_rent - max_budget) / max(max_budget, 1)
             score += max(0, 30 - diff_pct * 60)
 
-    # Distance score (20 pts)
-    distance = property_data.get("distance", property_data.get("distanceBwPropertyAndSearchArea"))
-    if distance is not None:
-        dist_km = _parse_number(distance) / 1000.0
-        if dist_km <= 2:
-            score += 20
-        elif dist_km <= 5:
-            score += max(0, 20 - (dist_km - 2) * 4)
-        elif dist_km <= 10:
-            score += max(0, 8 - (dist_km - 5))
-        # Beyond 10km, 0 points
+    # Proximity score (≤25 pts) — by REAL commute time when known, else by distance.
+    # If the user told us their daily destination (office/college) we rank by actual
+    # driving minutes to that place (the right-first signal), which REPLACES the
+    # crow-flies distance from the searched area. When no commute time is known we
+    # fall back to the original distance term, so users without a destination see
+    # unchanged behaviour. Budget/amenities keep their weight, so commute complements
+    # the score rather than overriding a clearly better-value property.
+    commute_min = property_data.get("commute_minutes")
+    if commute_min is not None:
+        cm = _parse_number(commute_min)
+        if cm <= 15:
+            score += 25
+        elif cm <= 30:
+            score += 25 - (cm - 15) * (10.0 / 15.0)   # 25 → 15
+        elif cm <= 60:
+            score += max(0.0, 15 - (cm - 30) * 0.5)    # 15 → 0
+        # Beyond 60 min, 0 points — too far to count as proximity
+    else:
+        distance = property_data.get("distance", property_data.get("distanceBwPropertyAndSearchArea"))
+        if distance is not None:
+            dist_km = _parse_number(distance) / 1000.0
+            if dist_km <= 2:
+                score += 20
+            elif dist_km <= 5:
+                score += max(0, 20 - (dist_km - 2) * 4)
+            elif dist_km <= 10:
+                score += max(0, 8 - (dist_km - 5))
+            # Beyond 10km, 0 points
 
     # Amenity overlap (30 pts) — with weighted must-have / nice-to-have
     must_have = _parse_amenities(preferences.get("must_have_amenities", ""))
