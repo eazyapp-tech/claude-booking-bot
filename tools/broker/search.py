@@ -1,13 +1,13 @@
 import asyncio
 import hashlib
 import json as _json
-import math
 import re
 
 import httpx
 
 from config import settings
 from core.log import get_logger
+from core.osrm import osrm_get
 from core.signals import record_signal
 
 logger = get_logger("tools.search")
@@ -30,8 +30,7 @@ from db.redis_store import (
     _r as _redis,
 )
 from utils.api import parse_amenities, parse_sharing_types, parse_sharing_types_structured
-from utils.geo import geocode_address
-from utils.retry import http_get
+from utils.geo import geocode_address, haversine_km
 from utils.scoring import match_score as calc_match_score, gender_compatible_listing
 
 
@@ -46,16 +45,6 @@ COMMUTE_RANK_TOPN = 10
 # rather than dead-air the search (Instant truth). When OSRM is healthy a single
 # matrix call returns well under this.
 COMMUTE_OSRM_TIMEOUT_S = 6
-
-
-def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    """Great-circle distance in km between two lat/lng points."""
-    r = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp = math.radians(lat2 - lat1)
-    dl = math.radians(lng2 - lng1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return r * 2 * math.asin(math.sqrt(a))
 
 
 def _fmt_rent(raw) -> str:
@@ -450,24 +439,21 @@ async def _compute_commute_minutes(properties: list, destination: str,
     # Straight-line distance — always available, instant. This is the office-proximity
     # ranking signal even when the routing service is unreachable.
     for p, plat, plng in targets:
-        p["_commute_km"] = round(_haversine_km(dest_lat, dest_lng, plat, plng), 1)
+        p["_commute_km"] = round(haversine_km(dest_lat, dest_lng, plat, plng), 1)
 
     # Upgrade to precise driving time via ONE OSRM table call (index 0 = destination,
-    # 1..N = properties). Short timeout: if OSRM is slow/down we keep the km signal
-    # rather than dead-air the search.
+    # 1..N = properties), through the circuit breaker — when OSRM is down it returns
+    # None instantly (no per-search timeout tax) and we keep the km signal.
     coord_str = f"{dest_lng},{dest_lat}" + "".join(
         f";{lng},{lat}" for _, lat, lng in targets
     )
-    try:
-        data = await asyncio.wait_for(
-            http_get(
-                f"https://maps.rentok.com/table/v1/driving/{coord_str}",
-                params={"sources": "0", "api_key": settings.OSRM_API_KEY},
-            ),
-            timeout=COMMUTE_OSRM_TIMEOUT_S,
-        )
-    except Exception as e:
-        logger.info("commute: OSRM unavailable (%s) — ranking by straight-line distance", e)
+    data = await osrm_get(
+        f"https://maps.rentok.com/table/v1/driving/{coord_str}",
+        params={"sources": "0", "api_key": settings.OSRM_API_KEY},
+        timeout=COMMUTE_OSRM_TIMEOUT_S,
+    )
+    if not data:
+        logger.info("commute: OSRM unavailable — ranking by straight-line distance")
         return
 
     durations = (data or {}).get("durations") or [[]]

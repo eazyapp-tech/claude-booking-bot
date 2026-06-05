@@ -6,10 +6,26 @@ response formats the API has returned historically:
   - Top-level: {"lat": ..., "long": ...}
 """
 
+import math
+
 from config import settings
 from core.log import get_logger
 
 logger = get_logger("utils.geo")
+
+
+def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle (straight-line) distance in km between two lat/lng points.
+
+    Used as an honest, infra-free proximity signal when the OSRM routing service
+    is unavailable — it measures real distance to a place, never an invented time.
+    """
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return r * 2 * math.asin(math.sqrt(a))
 
 
 async def geocode_address(location: str) -> tuple[float | None, float | None]:
