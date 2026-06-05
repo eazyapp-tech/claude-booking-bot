@@ -139,6 +139,22 @@ _weak = match_score(
 check("1f budget/amenity winner still outranks a near-but-bad-value option",
       _strong > _weak, f"strong={_strong} weak={_weak}")
 
+# 1g — straight-line km fallback (no minutes): graded by office distance, replaces
+#      the search-pin distance term. Used when the routing service is unavailable.
+_km_near = match_score({**_base_prop, "commute_km": 1.5}, _prefs)
+_km_mid = match_score({**_base_prop, "commute_km": 5}, _prefs)
+_km_far = match_score({**_base_prop, "commute_km": 12}, _prefs)
+check("1g commute_km grading monotonic (1.5 > 5 > 12 km)",
+      _km_near > _km_mid > _km_far, f"{_km_near},{_km_mid},{_km_far}")
+check("1g2 near office (≤2 km) scores ≥ baseline distance", _km_near >= _baseline,
+      f"{_km_near} < {_baseline}")
+
+# 1h — minutes take precedence over km when BOTH are present (OSRM upgrade wins).
+_both = match_score({**_base_prop, "commute_minutes": 8, "commute_km": 50}, _prefs)
+_minonly = match_score({**_base_prop, "commute_minutes": 8}, _prefs)
+check("1h precise minutes override the km fallback when both present",
+      _both == _minonly, f"{_both} != {_minonly}")
+
 
 # --------------------------------------------------------------------------- #
 # 2 + 3 + 4. search.py — compute, graceful degradation, end-to-end re-rank
@@ -215,54 +231,62 @@ def _install_stubs(props, prefs):
     return captured
 
 
-# 2. compute helper — one OSRM call assigns per-property minutes.
-print("\n[2] _compute_commute_minutes — one OSRM table call fills _commute_min")
+# 2. compute helper — haversine km always; OSRM upgrades to precise minutes.
+print("\n[2] _compute_commute_minutes — km always, OSRM upgrades to minutes")
 _install_stubs([_PROP_A, _PROP_B], {})
 _props = [dict(_PROP_A), dict(_PROP_B)]
 arun(search._compute_commute_minutes(_props, "Powai, Mumbai"))
 _by_name = {p["p_pg_name"]: p for p in _props}
-check("2a PropA got a far drive time (45 min)",
-      _by_name["Near-Area Far-Commute PG"].get("_commute_min") == 45,
-      _by_name["Near-Area Far-Commute PG"].get("_commute_min"))
-check("2b PropB got a near drive time (5 min)",
-      _by_name["Far-Area Near-Commute PG"].get("_commute_min") == 5,
-      _by_name["Far-Area Near-Commute PG"].get("_commute_min"))
+_A, _B = _by_name["Near-Area Far-Commute PG"], _by_name["Far-Area Near-Commute PG"]
+check("2a PropA got a far drive time (45 min)", _A.get("_commute_min") == 45, _A.get("_commute_min"))
+check("2b PropB got a near drive time (5 min)", _B.get("_commute_min") == 5, _B.get("_commute_min"))
+check("2c both got a straight-line km too (always-available signal)",
+      isinstance(_A.get("_commute_km"), float) and isinstance(_B.get("_commute_km"), float),
+      f"A={_A.get('_commute_km')} B={_B.get('_commute_km')}")
+check("2d PropB (at the destination coords) is ~0 km away",
+      _B.get("_commute_km") == 0.0, _B.get("_commute_km"))
 
 
-# 3. graceful degradation — failures leave properties untouched, never raise.
-print("\n[3] graceful — every failure path degrades to area ranking, never raises")
+# 3. graceful degradation — failures degrade the SIGNAL, never raise.
+print("\n[3] graceful — failures degrade to km / area, never raise")
 
 # 3a — empty / vague destination → no compute, no crash.
 _p = [dict(_PROP_A)]
 arun(search._compute_commute_minutes(_p, ""))
-check("3a empty destination → nothing computed", "_commute_min" not in _p[0])
+check("3a empty destination → nothing computed",
+      "_commute_min" not in _p[0] and "_commute_km" not in _p[0])
 _p = [dict(_PROP_A)]
 arun(search._compute_commute_minutes(_p, "office"))
-check("3b vague destination ('office') → nothing computed", "_commute_min" not in _p[0])
+check("3b vague destination ('office') → nothing computed",
+      "_commute_min" not in _p[0] and "_commute_km" not in _p[0])
 
-# 3c — destination geocode fails → nothing computed, no raise.
+# 3c — destination geocode fails → nothing computed (can't measure distance), no raise.
 async def _geo_none(_loc):
     return (None, None)
 search.geocode_address = _geo_none
 _p = [dict(_PROP_A)]
 arun(search._compute_commute_minutes(_p, "Powai"))
-check("3c destination geocode fails → nothing computed", "_commute_min" not in _p[0])
+check("3c destination geocode fails → nothing computed",
+      "_commute_min" not in _p[0] and "_commute_km" not in _p[0])
 search.geocode_address = _geocode_stub
 
-# 3d — OSRM raises → nothing computed, no raise.
+# 3d — OSRM down → KEEP the straight-line km (ranking survives), no minutes, no raise.
 async def _osrm_boom(url, params=None):
     raise RuntimeError("OSRM down")
 search.http_get = _osrm_boom
 _p = [dict(_PROP_A)]
 arun(search._compute_commute_minutes(_p, "Powai"))
-check("3d OSRM error → nothing computed, no raise", "_commute_min" not in _p[0])
+check("3d OSRM down → km kept, NO minutes (honest fallback), no raise",
+      "_commute_min" not in _p[0] and isinstance(_p[0].get("_commute_km"), float),
+      _p[0])
 search.http_get = _osrm_stub
 
 # 3e — property without coordinates is skipped quietly.
 _no_coords = {"p_id": "C", "p_pg_name": "No Coords PG", "p_rent_starts_from": 10000}
 _p = [dict(_no_coords)]
 arun(search._compute_commute_minutes(_p, "Powai"))
-check("3e property without coords → skipped, no _commute_min", "_commute_min" not in _p[0])
+check("3e property without coords → skipped, no signal",
+      "_commute_min" not in _p[0] and "_commute_km" not in _p[0])
 
 
 # 4. end-to-end re-rank through search_properties.
@@ -291,21 +315,45 @@ _top = (cap.get("carousel") or [{}])[0]
 check("4c top card surfaces 'X min to <dest>'",
       _top.get("commute") == "5 min to Powai", _top.get("commute"))
 
+# 4d — OSRM DOWN: re-rank still happens by straight-line distance, label is honest km.
+async def _osrm_down(url, params=None):
+    raise RuntimeError("OSRM timeout")
+cap2 = _install_stubs([_PROP_A, _PROP_B],
+                      {"location": "Kurla, Mumbai", "max_budget": 15000,
+                       "commute_from": "Powai, Mumbai"})
+search.http_get = _osrm_down
+_res_km = arun(search.search_properties("u_km"))
+_a_idx3 = _res_km.find("Near-Area Far-Commute PG")
+_b_idx3 = _res_km.find("Far-Area Near-Commute PG")
+check("4d OSRM down → near-office PG still ranked first (km re-rank survives)",
+      0 <= _b_idx3 < _a_idx3, f"a={_a_idx3} b={_b_idx3}")
+_top_km = (cap2.get("carousel") or [{}])[0]
+check("4d2 top card shows honest '~X km from <dest>' (no faked minutes)",
+      _top_km.get("commute", "").startswith("~") and "km from Powai" in _top_km.get("commute", ""),
+      _top_km.get("commute"))
+search.http_get = _osrm_stub
+
 
 # --------------------------------------------------------------------------- #
 # 5. build_carousel_items — commute is additive (absent when not computed)
 # --------------------------------------------------------------------------- #
 print("\n[5] build_carousel_items — commute field additive, contract unchanged")
-_info_with = {"property_name": "X", "property_rent": "10000",
-              "commute_minutes": 12, "commute_label": "Powai"}
+_info_min = {"property_name": "X", "property_rent": "10000",
+             "commute_minutes": 12, "commute_label": "Powai"}
+_info_km = {"property_name": "Z", "property_rent": "10000",
+            "commute_km": 3.2, "commute_label": "Powai"}
 _info_without = {"property_name": "Y", "property_rent": "9000"}
 
-_items_w, _ = search.build_carousel_items([_info_with], "19.07", "72.87")
-check("5a info with commute → item['commute'] == '12 min to Powai'",
+_items_w, _ = search.build_carousel_items([_info_min], "19.07", "72.87")
+check("5a info with minutes → item['commute'] == '12 min to Powai'",
       _items_w[0].get("commute") == "12 min to Powai", _items_w[0].get("commute"))
 
+_items_km, _ = search.build_carousel_items([_info_km], "19.07", "72.87")
+check("5b info with km only → item['commute'] == '~3.2 km from Powai'",
+      _items_km[0].get("commute") == "~3.2 km from Powai", _items_km[0].get("commute"))
+
 _items_wo, _ = search.build_carousel_items([_info_without], "19.07", "72.87")
-check("5b info without commute → NO 'commute' key (contract preserved)",
+check("5c info without commute → NO 'commute' key (contract preserved)",
       "commute" not in _items_wo[0], _items_wo[0])
 
 
