@@ -17,6 +17,7 @@ _KYC_TOOLS: list[str] = ["fetch_kyc_status", "initiate_kyc", "verify_kyc"]
 _PAYMENT_TOOLS: list[str] = ["create_payment_link", "verify_payment"]
 _BOOKING_BASE_TOOLS: list[str] = [
     "save_phone_number",
+    "get_support_contact",
     "save_visit_time",
     "save_call_time",
     # create_payment_link, verify_payment → moved to _PAYMENT_TOOLS (conditional on PAYMENT_REQUIRED)
@@ -27,10 +28,11 @@ _BOOKING_BASE_TOOLS: list[str] = [
 ]
 
 _AGENT_TOOLS: dict[str, list[str]] = {
-    "default": ["brand_info", "web_search"],
+    "default": ["brand_info", "web_search", "get_support_contact"],
     "broker": [
         "save_preferences",
         "save_name",
+        "get_support_contact",
         "search_properties",
         "fetch_property_details",
         "shortlist_property",
@@ -99,6 +101,7 @@ def init_registry() -> None:
     # -- broker --
     from tools.broker.preferences import save_preferences, TOOL_SCHEMA as _save_prefs_schema
     from tools.broker.save_name import save_name, TOOL_SCHEMA as _save_name_schema
+    from tools.broker.support_contact import get_support_contact, TOOL_SCHEMA as _support_contact_schema
     from tools.broker.search import search_properties, TOOL_SCHEMA as _search_schema
     from tools.broker.property_details import fetch_property_details, TOOL_SCHEMA as _details_schema
     from tools.broker.shortlist import shortlist_property, TOOL_SCHEMA as _shortlist_schema
@@ -144,10 +147,11 @@ def init_registry() -> None:
     from tools.profile.events import get_scheduled_events, TOOL_SCHEMA as _events_schema
     from tools.profile.shortlisted import get_shortlisted_properties, TOOL_SCHEMA as _shortlisted_schema
 
-    # Register all 29 tools: (name, schema, handler)
+    # Register all 30 tools: (name, schema, handler)
     register_tool("brand_info",                _brand_schema,            brand_info)
     register_tool("save_preferences",          _save_prefs_schema,       save_preferences)
     register_tool("save_name",                 _save_name_schema,        save_name)
+    register_tool("get_support_contact",        _support_contact_schema,  get_support_contact)
     register_tool("search_properties",         _search_schema,           search_properties)
     register_tool("fetch_property_details",    _details_schema,          fetch_property_details)
     register_tool("shortlist_property",        _shortlist_schema,        shortlist_property)
