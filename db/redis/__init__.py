@@ -221,3 +221,12 @@ from db.redis.eval import (  # noqa: F401
     get_eval_last_run,
     get_eval_history,
 )
+
+# Self-serve brand accounts domain
+from db.redis.accounts import (  # noqa: F401
+    get_account,
+    save_account,
+    account_exists,
+    set_email_verify_token,
+    consume_email_verify_token,
+)
