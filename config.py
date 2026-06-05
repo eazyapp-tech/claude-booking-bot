@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     # Self-serve signup — per-IP abuse throttle (unauthenticated endpoint)
     SIGNUP_MAX_PER_WINDOW: int = 10
     SIGNUP_RATE_WINDOW_SECONDS: int = 3600  # 1h
+    # Per-IP login throttle — catches credential-stuffing that rotates the username
+    # (the per-username throttle alone never trips when the attacker varies emails).
+    LOGIN_IP_MAX_FAILS: int = 50
 
     # Web Intelligence
     TAVILY_API_KEY: Optional[str] = None  # Tavily search API key for web intelligence

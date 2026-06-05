@@ -180,9 +180,15 @@ from fastapi import HTTPException  # noqa: E402
 from routers.admin import admin_login  # noqa: E402
 
 
+class _FakeClient:
+    host = "203.0.113.1"
+
+
 class _FakeRequest:
     def __init__(self, body):
         self._body = body
+        self.headers = {}
+        self.client = _FakeClient()
 
     async def json(self):
         return self._body

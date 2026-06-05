@@ -77,6 +77,48 @@ def check_signup_rate(client_ip: str) -> bool:
         return True
 
 
+def _login_ip_key(client_ip: str) -> str:
+    return f"login_ip_fail:{client_ip}"
+
+
+def login_ip_throttled(client_ip: str) -> bool:
+    """True if this IP has exceeded the failed-login limit within the lockout window.
+
+    Fail-open on a Redis hiccup — never lock out a real user because Redis blipped.
+    """
+    try:
+        from db.redis._base import _r
+
+        raw = _r().get(_login_ip_key(client_ip))
+        return bool(raw) and int(raw) >= settings.LOGIN_IP_MAX_FAILS
+    except Exception:
+        return False
+
+
+def record_login_ip_failure(client_ip: str) -> None:
+    """Count one failed login against this IP; arm the lockout window on first miss."""
+    try:
+        from db.redis._base import _r
+
+        key = _login_ip_key(client_ip)
+        r = _r()
+        n = r.incr(key)
+        if n == 1:
+            r.expire(key, settings.ADMIN_LOGIN_THROTTLE_SECONDS)
+    except Exception:
+        pass
+
+
+def clear_login_ip_failures(client_ip: str) -> None:
+    """Reset this IP's failed-login counter after a successful login."""
+    try:
+        from db.redis._base import _r
+
+        _r().delete(_login_ip_key(client_ip))
+    except Exception:
+        pass
+
+
 def validate_signup(email: str, password: str) -> str | None:
     """Return an error string on invalid input, or None if OK."""
     if not email or not _EMAIL_RE.match(email.strip()):

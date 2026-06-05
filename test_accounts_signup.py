@@ -180,6 +180,18 @@ def test_signup_rate_limit():
     check("over-limit attempts are blocked", allowed[3:] == [False, False])
     check("a different IP is unaffected", check_signup_rate("198.51.100.9") is True)
 
+def test_login_ip_throttle():
+    print("test_login_ip_throttle")
+    from core.accounts import login_ip_throttled, record_login_ip_failure, clear_login_ip_failures
+    settings.LOGIN_IP_MAX_FAILS = 3
+    ip = "203.0.113.99"
+    check("fresh IP not throttled", login_ip_throttled(ip) is False)
+    for _ in range(3):
+        record_login_ip_failure(ip)
+    check("throttled after reaching the limit", login_ip_throttled(ip) is True)
+    clear_login_ip_failures(ip)
+    check("cleared after success", login_ip_throttled(ip) is False)
+
 if __name__ == "__main__":
     test_store()
     test_demo_brand()
@@ -187,5 +199,6 @@ if __name__ == "__main__":
     test_login_and_verify()
     test_login_precedence()
     test_signup_rate_limit()
+    test_login_ip_throttle()
     print(f"\n{_passed} passed, {_failed} failed")
     sys.exit(0 if _failed == 0 else 1)

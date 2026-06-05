@@ -855,12 +855,30 @@ async def admin_set_flags(request: Request, brand_hash: str = Depends(require_ad
 # frontend bundle. See core/admin_login.py.
 # ---------------------------------------------------------------------------
 
+def _client_ip(request: Request) -> str:
+    """Real client IP for rate-limiting behind Azure Front Door / Container Apps.
+
+    `request.client.host` is the proxy hop, not the caller. Front Door sets
+    X-Azure-ClientIP to the true client (clients can't forge it); prefer that,
+    then the first X-Forwarded-For hop, then the socket peer.
+    """
+    azure = request.headers.get("X-Azure-ClientIP")
+    if azure and azure.strip():
+        return azure.strip()
+    xff = request.headers.get("X-Forwarded-For")
+    if xff and xff.strip():
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 @router.post("/admin/login")
 async def admin_login(request: Request):
     from core.admin_login import (
         verify_admin_login, is_throttled, _record_failure, _clear_failures,
     )
-    from core.accounts import verify_login
+    from core.accounts import (
+        verify_login, login_ip_throttled, record_login_ip_failure, clear_login_ip_failures,
+    )
 
     body = await request.json()
     username = (body.get("username") or "").strip()
@@ -868,9 +886,10 @@ async def admin_login(request: Request):
     if not username or not password:
         raise HTTPException(status_code=400, detail="username and password are required")
 
-    # Brute-force throttle covers BOTH the account path and the legacy credential
-    # (the account path has no internal throttle of its own).
-    if is_throttled(username):
+    # Two throttles: per-username (targeted guessing) AND per-IP (credential
+    # stuffing that rotates the email so the username counter never trips).
+    ip = _client_ip(request)
+    if is_throttled(username) or login_ip_throttled(ip):
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
 
     # Self-serve accounts first (username == email). Only fall back to the legacy
@@ -885,6 +904,7 @@ async def admin_login(request: Request):
 
     if reason == "ok":
         _clear_failures(username)
+        clear_login_ip_failures(ip)
         return {"api_key": api_key}
     if reason == "unconfigured":
         raise HTTPException(status_code=503, detail="Admin login is not configured")
@@ -892,9 +912,11 @@ async def admin_login(request: Request):
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
     if reason == "misconfigured":
         raise HTTPException(status_code=503, detail="Admin login misconfigured")
-    # legacy verify_admin_login records its own failure; only count the account path here.
+    # legacy verify_admin_login records its own per-username failure; only count the
+    # account path there. The per-IP counter is recorded for every failure.
     if not consulted_legacy:
         _record_failure(username)
+    record_login_ip_failure(ip)
     raise HTTPException(status_code=401, detail="Invalid username or password")
 
 
@@ -902,7 +924,7 @@ async def admin_login(request: Request):
 async def admin_signup(request: Request):
     from core.accounts import signup, send_verification_email, check_signup_rate
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _client_ip(request)
     if not check_signup_rate(client_ip):
         raise HTTPException(status_code=429, detail="Too many signups from this network. Try again later.")
 
