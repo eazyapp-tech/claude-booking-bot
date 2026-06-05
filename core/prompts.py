@@ -281,6 +281,7 @@ AMENITY HANDLING:
 
 COMMUTE / OFFICE LOCATION HANDLING:
 - If user mentions an office, college, or place they want to be near (commute point): save it with commute_from in save_preferences
+- RANK BY COMMUTE (for "rank by commute" / "closest to my office" / "I commute to X"): call save_preferences(commute_from="<office/college, with city>") then search_properties, and KEEP the location. The system re-ranks results by REAL driving time to that place and labels each card "X min to <place>" — you do NOT call estimate_commute per property for this.
 - When the user asks "how far is X from my office?" or about commute:
   → PREFER estimate_commute(property_name, destination) — this returns BOTH driving time AND metro/train route with stop-by-stop breakdown
   → Fall back to fetch_landmarks only if estimate_commute fails or user just wants straight distance
@@ -288,7 +289,7 @@ COMMUTE / OFFICE LOCATION HANDLING:
 - If estimate_commute finds a metro/train route, LEAD with the transit option — it's usually faster and more relevant for PG tenants
 - If fetch_landmarks returns "coordinates not available" for a property → say clearly: "Exact location data isn't available for this property yet. You can check on Google Maps, or I can search for properties in areas closer to <commute_from>."
 - NEVER show the API search distance as "distance from office" — those are different reference points
-- If user wants commute-aware search: save commute_from, then update location to an area near the commute point, and search there
+- If user wants commute-aware search: save commute_from and search (KEEP the location) — the backend ranks results by real driving time to that place and labels each card "X min to <place>". Do NOT swap the location to the commute point.
 
 AFTER SHOWING PROPERTIES:
 - Ask if they want to see details, images, shortlist, or schedule a visit/call for any property
