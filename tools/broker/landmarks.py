@@ -5,8 +5,9 @@ import os
 
 from config import settings
 from utils.properties import find_property as _find_prop
-from utils.geo import geocode_address
+from utils.geo import geocode_address, haversine_km
 from utils.retry import http_get
+from core.osrm import osrm_get
 from core.log import get_logger
 
 logger = get_logger("tools.landmarks")
@@ -202,23 +203,29 @@ async def fetch_landmarks(user_id: str, landmark_name: str, property_name: str, 
     if not landmark_lat or not landmark_long:
         return f"Could not find coordinates for '{landmark_name}'."
 
+    # Through the OSRM circuit breaker: returns None instantly when the routing
+    # service is down (no timeout tax) and we fall back to an honest straight-line.
+    dist_data = await osrm_get(
+        f"https://maps.rentok.com/table/v1/driving/{prop_long},{prop_lat};{landmark_long},{landmark_lat}",
+        params={"sources": "0", "api_key": settings.OSRM_API_KEY},
+    )
+    if dist_data:
+        durations = dist_data.get("durations", [[]])
+        distances = dist_data.get("distances", [[]])
+        if durations and durations[0] and len(durations[0]) > 1:
+            time_min = round(durations[0][1] / 60, 1)
+            dist_km = round(distances[0][1] / 1000, 1) if distances and distances[0] and len(distances[0]) > 1 else "N/A"
+            return f"Distance from '{prop.get('property_name', property_name)}' to '{landmark_name}': {dist_km} km ({time_min} min by car)"
+
+    # OSRM unavailable → honest straight-line distance (never a faked drive time).
     try:
-        dist_data = await http_get(
-            f"https://maps.rentok.com/table/v1/driving/{prop_long},{prop_lat};{landmark_long},{landmark_lat}",
-            params={"sources": "0", "api_key": settings.OSRM_API_KEY},
-        )
-    except Exception as e:
-        return f"Error calculating distance: {str(e)}"
-
-    durations = dist_data.get("durations", [[]])
-    distances = dist_data.get("distances", [[]])
-
-    if durations and durations[0] and len(durations[0]) > 1:
-        time_min = round(durations[0][1] / 60, 1)
-        dist_km = round(distances[0][1] / 1000, 1) if distances and distances[0] and len(distances[0]) > 1 else "N/A"
-        return f"Distance from '{prop.get('property_name', property_name)}' to '{landmark_name}': {dist_km} km ({time_min} min by car)"
-
-    return "Could not calculate distance."
+        km = round(haversine_km(float(prop_lat), float(prop_long),
+                                float(landmark_lat), float(landmark_long)), 1)
+        return (f"'{prop.get('property_name', property_name)}' is about {km} km "
+                f"from '{landmark_name}' in a straight line — live route timing is "
+                f"unavailable right now.")
+    except (ValueError, TypeError):
+        return "Could not calculate distance."
 
 
 # ---------------------------------------------------------------------------
@@ -284,11 +291,12 @@ async def _estimate_commute_inner(
         return f"Could not find coordinates for '{destination}'. Please check the address and try again."
 
     if dest_lat and dest_long:
-        try:
-            dist_data = await http_get(
-                f"https://maps.rentok.com/table/v1/driving/{prop_long},{prop_lat};{dest_long},{dest_lat}",
-                params={"sources": "0", "api_key": settings.OSRM_API_KEY},
-            )
+        # Through the OSRM circuit breaker — None instantly when routing is down.
+        dist_data = await osrm_get(
+            f"https://maps.rentok.com/table/v1/driving/{prop_long},{prop_lat};{dest_long},{dest_lat}",
+            params={"sources": "0", "api_key": settings.OSRM_API_KEY},
+        )
+        if dist_data:
             durations = dist_data.get("durations", [[]])
             distances = dist_data.get("distances", [[]])
             if durations and durations[0] and len(durations[0]) > 1:
@@ -297,8 +305,12 @@ async def _estimate_commute_inner(
                 driving_info = f"By car: ~{int(drive_min)} min"
                 if drive_km:
                     driving_info += f" ({drive_km} km)"
-        except Exception as e:
-            logger.warning("OSRM driving estimate failed: %s", e)
+        if not driving_info:
+            # OSRM unavailable → honest straight-line distance, NEVER a faked time.
+            # (This is what keeps the broker from inventing "~8-10 km" guesses.)
+            km = round(haversine_km(prop_lat, prop_long, dest_lat, dest_long), 1)
+            driving_info = (f"~{km} km away in a straight line "
+                            f"(live route timing unavailable right now)")
 
     # --- Transit estimate ---
     transit_info = ""

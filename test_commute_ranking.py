@@ -166,9 +166,10 @@ async def _noop_async(*a, **k):
     return None
 
 
-# OSRM table stub: source (index 0) → 0 s; each property keyed by a lat marker in
+# osrm_get stub: source (index 0) → 0 s; each property keyed by a lat marker in
 # the coord string. PropA (lat 19.075) is 45 min away; PropB (lat 19.25) is 5 min.
-async def _osrm_stub(url, params=None):
+# (search.py now calls core.osrm.osrm_get, which returns parsed JSON or None.)
+async def _osrm_stub(url, params=None, timeout=None):
     coord_part = url.rsplit("/", 1)[-1]
     coords = coord_part.split(";")
     row = []
@@ -208,7 +209,7 @@ def _install_stubs(props, prefs):
         return [dict(p) for p in props]
 
     search.geocode_address = _geocode_stub
-    search.http_get = _osrm_stub
+    search.osrm_get = _osrm_stub
     search._call_search_api = _call_api
     search._enrich_with_images = _noop_async
     search._geocode_properties = _noop_async        # props carry coords already
@@ -270,16 +271,16 @@ check("3c destination geocode fails → nothing computed",
       "_commute_min" not in _p[0] and "_commute_km" not in _p[0])
 search.geocode_address = _geocode_stub
 
-# 3d — OSRM down → KEEP the straight-line km (ranking survives), no minutes, no raise.
-async def _osrm_boom(url, params=None):
-    raise RuntimeError("OSRM down")
-search.http_get = _osrm_boom
+# 3d — OSRM down (osrm_get returns None) → KEEP the straight-line km, no minutes.
+async def _osrm_boom(url, params=None, timeout=None):
+    return None
+search.osrm_get = _osrm_boom
 _p = [dict(_PROP_A)]
 arun(search._compute_commute_minutes(_p, "Powai"))
 check("3d OSRM down → km kept, NO minutes (honest fallback), no raise",
       "_commute_min" not in _p[0] and isinstance(_p[0].get("_commute_km"), float),
       _p[0])
-search.http_get = _osrm_stub
+search.osrm_get = _osrm_stub
 
 # 3e — property without coordinates is skipped quietly.
 _no_coords = {"p_id": "C", "p_pg_name": "No Coords PG", "p_rent_starts_from": 10000}
@@ -315,13 +316,13 @@ _top = (cap.get("carousel") or [{}])[0]
 check("4c top card surfaces 'X min to <dest>'",
       _top.get("commute") == "5 min to Powai", _top.get("commute"))
 
-# 4d — OSRM DOWN: re-rank still happens by straight-line distance, label is honest km.
-async def _osrm_down(url, params=None):
-    raise RuntimeError("OSRM timeout")
+# 4d — OSRM DOWN (osrm_get → None): re-rank still happens by straight-line distance.
+async def _osrm_down(url, params=None, timeout=None):
+    return None
 cap2 = _install_stubs([_PROP_A, _PROP_B],
                       {"location": "Kurla, Mumbai", "max_budget": 15000,
                        "commute_from": "Powai, Mumbai"})
-search.http_get = _osrm_down
+search.osrm_get = _osrm_down
 _res_km = arun(search.search_properties("u_km"))
 _a_idx3 = _res_km.find("Near-Area Far-Commute PG")
 _b_idx3 = _res_km.find("Far-Area Near-Commute PG")
@@ -331,7 +332,7 @@ _top_km = (cap2.get("carousel") or [{}])[0]
 check("4d2 top card shows honest '~X km from <dest>' (no faked minutes)",
       _top_km.get("commute", "").startswith("~") and "km from Powai" in _top_km.get("commute", ""),
       _top_km.get("commute"))
-search.http_get = _osrm_stub
+search.osrm_get = _osrm_stub
 
 
 # --------------------------------------------------------------------------- #
