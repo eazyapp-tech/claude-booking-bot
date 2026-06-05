@@ -36,7 +36,7 @@ SKILL_TOOLS: dict[str, list[str]] = {
 # Always included regardless of skill detection (safety net).
 # save_preferences + search are the two most common tools; save_name is always
 # present so Tarini can capture a name the moment it's volunteered, on any turn.
-ALWAYS_TOOLS: list[str] = ["save_preferences", "search_properties", "save_name"]
+ALWAYS_TOOLS: list[str] = ["save_preferences", "search_properties", "save_name", "get_support_contact"]
 
 # Skills that are always loaded alongside any other skill.
 # NOTE: selling.md is 6.9k chars — too large to always load.

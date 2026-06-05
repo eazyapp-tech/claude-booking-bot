@@ -44,7 +44,8 @@ protection + the CI gate guard `main`.
 ## 🎯 Current focus
 
 - **Last shipped:** **NAME-1** — name capture + personalization ✅ ([#45](https://github.com/5s10r2/claude-booking-bot/pull/45), `8921fb5`). Live-verified: bot captures a volunteered name, uses it by first name across turns, persists it. Preceded by **C1** — OSRM circuit breaker + honest straight-line fallback ✅ ([#43](https://github.com/5s10r2/claude-booking-bot/pull/43)). **Live-verified 4/4** (R1 intact via osrm_get; estimate_commute 30s dead-air eliminated — 0 new timeouts across 3 commute Qs). Preceded by **R1 commute ranking** (marquee) ✅ #37/#38/#39 + eazypg-chat#8, live 10/10.
-- **Doing next:** your call — **G-20** (build the per-brand support line — you supply numbers) → **R8** (intent-tuned ranking, needs a design pass first). G-13 verified done; NAME-1 shipped + live-verified.
+- **In PR:** **G-20** — share the property's PUBLIC customer-care line (`communication_contact`) only when the user asks/stuck. Bot-only, NO config/backend change (verify-first found RentOk already captures it per-property). [#47](https://github.com/5s10r2/claude-booking-bot/pull/47), 21/21 hermetic, gate 41/41.
+- **Doing next:** your call — **R8** (intent-tuned ranking, needs a design pass first). G-13 verified done; NAME-1 + G-20 shipped/in-PR.
 - **Blocked on you:** **OSRM EC2 restart** (backend/AWS — bot is correct either way now, but a restart auto-upgrades R1 to precise "X min" labels). 2 product decisions (E3, AV-§2) when convenient.
 
 > **Live finding (2026-06-05):** `maps.rentok.com` OSRM is **down at the network level** on prod (EC2 stopped/terminated — confirmed with backend; the bot is the live consumer, backend's own OSRM refs are commented out). **C1 makes the bot correct regardless:** ranks by honest straight-line proximity, skips the dead host instantly via the breaker, self-heals when the EC2 returns. On restore, confirm the bot's Render `OSRM_API_KEY` + the OSRM param name (`api_key` vs `key`) — one live commute search flips labels "~X km" → "X min".
@@ -62,7 +63,7 @@ protection + the CI gate guard `main`.
 | **R5** | Outcome-signal load degrades visibly (logs a warning) instead of silently blind | Rf | ✅ | [#35](https://github.com/5s10r2/claude-booking-bot/pull/35) |
 | **NAME-1** | Capture + use the user's name (personalization). **✅ LIVE-VERIFIED.** `save_name` tool (web analog of WhatsApp profile name, in ALWAYS_TOOLS) + every conversational agent appends an uncached name directive → addresses the user by first name; absent name = byte-clean prompt. 31/31 hermetic. Prod: "I'm Sanchay" → "Got it, Sanchay! 🙌" → used again next turn → persisted (admin API). | Rl Gr | ✅ | [#45](https://github.com/5s10r2/claude-booking-bot/pull/45) |
 | **G-13** | Surface property lat/long. **✅ ALREADY DONE — verify-first found the "formatting only" label was stale.** Coords reach the user three ways: carousel `lat`/`lng` + `map_center` → Leaflet Map View; `google_map` deep link built in search.py:757 + property_details.py:161. No PR needed. | Rl | ✅ | — |
-| **G-20** | Surface support contacts. **🔵 NOT formatting-only — product-gated.** Property owner phone is *deliberately* hidden (prompts.py:234 — privacy + lead funnel); no brand support line exists in config. **Decision (2026-06-05): add a per-brand `support_contact` field** (admin-editable). Next bot+config PR; you supply numbers to seed. | Rl | ⬜ | — |
+| **G-20** | Surface support contacts. **⏳ IN PR — bot-only, no config/backend change.** Verify-first (after PO note "we already take a comms contact at RentOk") found the source: `property.communication_contact` (= OxOtel's `7304531989`, public customer-care line; RentOk's own bot already shares it) + microsite `customer_support_*` — distinct from the hidden `personal_contact` (owner). New `get_support_contact` tool surfaces it **only when the user asks for a number/human or is stuck** (per PO). 21/21 hermetic. | Rl Gr | ⏳ | [#47](https://github.com/5s10r2/claude-booking-bot/pull/47) |
 | **P1.7** | KYC generate-failure no longer reported as false success | H | ⏳ | [#30](https://github.com/5s10r2/claude-booking-bot/pull/30) |
 | **R8** | Intent-tuned ranking weight profiles per user. **Do after R1 + R5.** | Rf | ⬜ | — |
 
@@ -163,6 +164,19 @@ Evidence so we never re-litigate or duplicate finished work.
 
 ## Session log (append-only)
 
+- **2026-06-05 (G-20 build)** — PO note "we already take a communication contact
+  at RentOk" → verify-first found it: `property.communication_contact` (OxOtel =
+  `7304531989`, a PUBLIC customer-care line the RentOk backend's own bot already
+  shares with users) + microsite `customer_support_whatsapp`/`_number`/`_email` —
+  **distinct from `personal_contact`** (`7977106781`, the owner's private number the
+  bot must never reveal). Live-probed: search results carry ONLY `p_personal_contact`;
+  the public line lives ONLY in `property-details-bots`. So the earlier "add a
+  per-brand `support_contact` config field" plan was scrapped — **no config/backend
+  change needed.** New `get_support_contact` tool (broker+booking+default, ALWAYS_TOOLS)
+  fetches the public line on demand, caches it, and Tarini shares it **only when the
+  user asks for a number / a human / is stuck** (PO decision — keeps the lead funnel
+  intact). Owner number stays hidden. `_base.md` + legacy broker contact rule refined.
+  `test_support_contact.py` 21/21, gate 41/41. [#47](https://github.com/5s10r2/claude-booking-bot/pull/47).
 - **2026-06-05 (NAME-1 + G-13/G-20 verify)** — PO flagged: the bot never asks the
   lead's name → zero personalization. Verify-first confirmed it and root-caused two
   breaks: (1) **capture** — `set_user_name` fires ONLY on the WhatsApp webhook (Meta
