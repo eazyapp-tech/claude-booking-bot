@@ -139,10 +139,32 @@ def test_login_and_verify():
     check("token single-use", verify_email(result["verify_token"]) is False)
     check("bad token rejected", verify_email("garbage") is False)
 
+def test_login_precedence():
+    print("test_login_precedence")
+    # An account login should win without consulting the legacy env credential.
+    import core.accounts as acc
+    import core.admin_login as legacy
+    settings.DEMO_PG_IDS = ["pg_demo_1"]
+    res, _ = signup("prec@brand.com", "password123", "Acme")
+
+    legacy_called = {"n": 0}
+    orig = legacy.verify_admin_login
+    legacy.verify_admin_login = lambda u, p: (legacy_called.__setitem__("n", legacy_called["n"] + 1) or (None, "invalid"))
+    try:
+        # Simulate the endpoint's resolution order.
+        key, reason = acc.verify_login("prec@brand.com", "password123")
+        if reason != "ok":
+            key, reason = legacy.verify_admin_login("prec@brand.com", "password123")
+        check("account login wins", reason == "ok" and key == res["api_key"])
+        check("legacy not consulted on account hit", legacy_called["n"] == 0)
+    finally:
+        legacy.verify_admin_login = orig
+
 if __name__ == "__main__":
     test_store()
     test_demo_brand()
     test_signup()
     test_login_and_verify()
+    test_login_precedence()
     print(f"\n{_passed} passed, {_failed} failed")
     sys.exit(0 if _failed == 0 else 1)

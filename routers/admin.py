@@ -858,6 +858,7 @@ async def admin_set_flags(request: Request, brand_hash: str = Depends(require_ad
 @router.post("/admin/login")
 async def admin_login(request: Request):
     from core.admin_login import verify_admin_login
+    from core.accounts import verify_login
 
     body = await request.json()
     username = (body.get("username") or "").strip()
@@ -865,7 +866,11 @@ async def admin_login(request: Request):
     if not username or not password:
         raise HTTPException(status_code=400, detail="username and password are required")
 
-    api_key, reason = verify_admin_login(username, password)
+    # Self-serve accounts first (username == email); fall back to the legacy env credential.
+    api_key, reason = verify_login(username, password)
+    if reason != "ok":
+        api_key, reason = verify_admin_login(username, password)
+
     if reason == "ok":
         return {"api_key": api_key}
     if reason == "unconfigured":
@@ -875,6 +880,45 @@ async def admin_login(request: Request):
     if reason == "misconfigured":
         raise HTTPException(status_code=503, detail="Admin login misconfigured")
     raise HTTPException(status_code=401, detail="Invalid username or password")
+
+
+@router.post("/admin/signup")
+async def admin_signup(request: Request):
+    from core.accounts import signup, send_verification_email
+
+    body = await request.json()
+    email = (body.get("email") or "").strip()
+    password = body.get("password") or ""
+    brand_name = (body.get("brand_name") or "").strip()
+
+    result, reason = signup(email, password, brand_name)
+    if reason == "ok":
+        send_verification_email(result["email"], result["verify_token"])
+        # Return the api_key so the panel logs straight into the demo.
+        return {
+            "status": 200,
+            "api_key": result["api_key"],
+            "brand_link_token": result["brand_link_token"],
+            "email_verified": False,
+        }
+    if reason == "exists":
+        raise HTTPException(status_code=409, detail="An account with this email already exists.")
+    if reason.startswith("invalid:"):
+        raise HTTPException(status_code=400, detail=reason.split("invalid:", 1)[1])
+    raise HTTPException(status_code=400, detail="Signup failed.")
+
+
+@router.post("/admin/verify-email")
+async def admin_verify_email(request: Request):
+    from core.accounts import verify_email
+
+    body = await request.json()
+    token = (body.get("token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token is required")
+    if verify_email(token):
+        return {"status": 200, "verified": True}
+    raise HTTPException(status_code=400, detail="Invalid or expired verification link.")
 
 
 # ---------------------------------------------------------------------------
