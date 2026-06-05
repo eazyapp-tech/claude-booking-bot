@@ -57,7 +57,33 @@ def test_store():
     check("token is single-use", consume_email_verify_token("tok123") is None)
     check("unknown token is None", consume_email_verify_token("nope") is None)
 
+from config import settings
+from core.demo_brand import build_demo_config, provision_demo_brand
+from db.redis.brand import get_brand_config, _brand_hash
+
+def test_demo_brand():
+    print("test_demo_brand")
+    settings.DEMO_PG_IDS = ["pg_demo_1", "pg_demo_2"]
+    settings.DEMO_CITIES = ["Mumbai"]
+    settings.DEMO_AREAS = ["Kurla"]
+    cfg = build_demo_config("Acme PG")
+    check("demo brand_name", cfg["brand_name"] == "Acme PG")
+    check("demo pg_ids copied", cfg["pg_ids"] == ["pg_demo_1", "pg_demo_2"])
+    check("demo is_demo flag", cfg["is_demo"] is True)
+    check("demo status", cfg["status"] == "demo")
+    check("demo has link token", bool(cfg["brand_link_token"]))
+    check("blank name → default", build_demo_config("")["brand_name"] == "My Demo PG")
+
+    api_key = "eapg_demotest"
+    provisioned = provision_demo_brand(api_key, "Acme PG")
+    stored = get_brand_config(api_key)
+    check("provision persists brand_config", stored is not None)
+    check("provision sets brand_hash", stored["brand_hash"] == _brand_hash(api_key))
+    check("provision keeps pg_ids", stored["pg_ids"] == ["pg_demo_1", "pg_demo_2"])
+    check("provision returns same token", provisioned["brand_link_token"] == stored["brand_link_token"])
+
 if __name__ == "__main__":
     test_store()
+    test_demo_brand()
     print(f"\n{_passed} passed, {_failed} failed")
     sys.exit(0 if _failed == 0 else 1)
