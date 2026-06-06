@@ -17,6 +17,7 @@ from db.redis_store import (
 from utils.api import check_rentok_response, RentokAPIError, user_error
 from utils.properties import find_property as _find_property
 from utils.retry import http_get, http_post
+from tools.booking.notify_manager import fire_booking_notification
 
 logger = get_logger("tools.payment")
 
@@ -250,6 +251,10 @@ async def verify_payment(user_id: str, **kwargs) -> str:
     track_funnel(user_id, "booking", brand_hash=brand_hash)
     track_funnel(user_id, "payment_completed", brand_hash=brand_hash)
     cancel_followups(user_id, "payment_pending")
+
+    # SILO — tell the manager a token was paid (owner + team FCM). Payment is already
+    # recorded (gate above); background fire-and-forget, never blocks/breaks the flow.
+    fire_booking_notification("token", user_id, pg_id, pg_number, pg_name, "", "")
 
     if eazypg_id and not lead_token_ok:
         phone = get_user_phone(user_id) or ""
