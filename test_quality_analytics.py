@@ -21,10 +21,23 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
 os.environ.setdefault("DATABASE_URL", "postgresql://fake:fake@localhost/fake")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-not-used")
 
+from datetime import date as _date, timedelta as _td  # noqa: E402
+
 import db.redis._base as _base  # noqa: E402
 
 _passed = 0
 _failed = 0
+
+
+def _day(n: int = 1) -> str:
+    """A date string `n` days before today, in get_quality_trend's isoformat.
+
+    Trend fixtures MUST be relative to today: get_quality_trend() scans the real
+    last-`days` window from date.today(), so hardcoded calendar dates silently
+    age out of the window and rot the test. n in 1..6 always falls inside the
+    default 7-day window.
+    """
+    return (_date.today() - _td(days=n)).isoformat()
 
 
 def check(name, condition, detail=""):
@@ -155,8 +168,8 @@ check("trend: all items have 'date' key", all("date" in t for t in trend), "")
 
 # ── 7. trend: correct avg when data present (string values, decode_responses=True sim) ──
 _fake.store.clear()
-_fake.store["quality_daily:abc123:2026-05-30"] = {"sum": "150", "count": "3"}  # avg=50.0
-_fake.store["quality_daily:abc123:2026-05-31"] = {"sum": "200", "count": "4"}  # avg=50.0
+_fake.store[f"quality_daily:abc123:{_day(2)}"] = {"sum": "150", "count": "3"}  # avg=50.0
+_fake.store[f"quality_daily:abc123:{_day(1)}"] = {"sum": "200", "count": "4"}  # avg=50.0
 trend2 = get_quality_trend(brand_hash="abc123", days=7)
 check("trend: 7 items returned when some have data", len(trend2) == 7, f"len={len(trend2)}")
 # Find entries with data
@@ -165,27 +178,27 @@ check("trend: exactly 2 entries have avg", len(data_entries) == 2, f"data_entrie
 
 # ── 8. trend: correct avg computation (rounds to 1 decimal) ──────────────────
 _fake.store.clear()
-_fake.store["quality_daily:abc123:2026-06-01"] = {"sum": "221", "count": "3"}  # 221/3 = 73.666… → 73.7
+_fake.store[f"quality_daily:abc123:{_day(1)}"] = {"sum": "221", "count": "3"}  # 221/3 = 73.666… → 73.7
 trend3 = get_quality_trend(brand_hash="abc123", days=7)
-entry = next((t for t in trend3 if t["date"] == "2026-06-01"), None)
+entry = next((t for t in trend3 if t["date"] == _day(1)), None)
 check("trend: avg rounds to 1 decimal",
       entry is not None and entry["avg"] == 73.7,
       f"got avg={entry['avg'] if entry else 'MISSING'}")
 
 # ── 9. trend: bytes values handled safely (decode_responses=False simulation) ──
 _fake.store.clear()
-_fake.store["quality_daily:abc123:2026-06-01"] = {b"sum": b"80", b"count": b"2"}  # avg=40.0
+_fake.store[f"quality_daily:abc123:{_day(1)}"] = {b"sum": b"80", b"count": b"2"}  # avg=40.0
 trend4 = get_quality_trend(brand_hash="abc123", days=7)
-entry4 = next((t for t in trend4 if t["date"] == "2026-06-01"), None)
+entry4 = next((t for t in trend4 if t["date"] == _day(1)), None)
 check("trend: handles bytes keys/values without TypeError",
       entry4 is not None and entry4["avg"] == 40.0,
       f"got avg={entry4['avg'] if entry4 else 'MISSING'}")
 
 # ── 10. trend: no brand_hash uses global key ────────────────────────────────
 _fake.store.clear()
-_fake.store["quality_daily:2026-06-01"] = {"sum": "100", "count": "5"}  # avg=20.0
+_fake.store[f"quality_daily:{_day(1)}"] = {"sum": "100", "count": "5"}  # avg=20.0
 trend5 = get_quality_trend(brand_hash=None, days=7)
-entry5 = next((t for t in trend5 if t["date"] == "2026-06-01"), None)
+entry5 = next((t for t in trend5 if t["date"] == _day(1)), None)
 check("trend: brand_hash=None reads global key",
       entry5 is not None and entry5["avg"] == 20.0,
       f"got avg={entry5['avg'] if entry5 else 'MISSING'}")
