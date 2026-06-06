@@ -44,8 +44,9 @@ protection + the CI gate guard `main`.
 ## 🎯 Current focus
 
 - **Last shipped:** **NAME-1** — name capture + personalization ✅ ([#45](https://github.com/5s10r2/claude-booking-bot/pull/45), `8921fb5`). Live-verified: bot captures a volunteered name, uses it by first name across turns, persists it. Preceded by **C1** — OSRM circuit breaker + honest straight-line fallback ✅ ([#43](https://github.com/5s10r2/claude-booking-bot/pull/43)). **Live-verified 4/4** (R1 intact via osrm_get; estimate_commute 30s dead-air eliminated — 0 new timeouts across 3 commute Qs). Preceded by **R1 commute ranking** (marquee) ✅ #37/#38/#39 + eazypg-chat#8, live 10/10.
+- **Last shipped:** **R8** — intent-tuned ranking weight profiles ✅ **LIVE-VERIFIED** ([#50](https://github.com/5s10r2/claude-booking-bot/pull/50), `ff0b2d4`). Design signed off (deterministic heuristic · all 4 intents · moderate ~+40%). `classify_intent` picks budget/commute/amenity/quality-led from deliberate prefs + the current message (read from Redis history); absent/ambiguous → balanced → **byte-identical to pre-R8** (structural: every component scaled by weight/default = 1.0). 105-cell golden no-regression matrix + reorder proofs, 26 assertions. Preceded by prerequisite fix [#49](https://github.com/5s10r2/claude-booking-bot/pull/49) (date-flaky quality-trend test that was reddening the gate for ALL PRs). Gate **41/41**. **Prod (same Kurla search, only the anchor word differs):** balanced 76/75/70/69/69 → budget-led rewards the ₹9k property (Mass Metropolis 70→74, climbs above a ₹10k option) → quality-led 63/61/56/56/55 (de-emphasizes budget). The anchor word changing the ranking is impossible pre-R8 → deploy live + working. (Minor run-to-run score variance = live transit/outcome signals under down-OSRM, pre-existing, not R8.)
 - **Last shipped:** **G-20** — public customer-care line shared only when asked/stuck ✅ ([#47](https://github.com/5s10r2/claude-booking-bot/pull/47), `6ec495e`, live-verified 3/3). Bot-only, no config/backend change.
-- **Doing next:** your call — **R8** (intent-tuned ranking) is the biggest remaining bot-only item but needs a **design pass first** (intent taxonomy + weight changes + no-regression plan) — brainstorm + your sign-off before code. All cheap Phase-1 "Real" wins are now done (G-13 verified, NAME-1 + G-20 shipped).
+- **Doing next:** your call — all cheap Phase-1 "Real" wins are done (R1, R5, R8, NAME-1, G-13, G-20). Remaining bot-only: P1.7 (KYC honesty, in PR [#30](https://github.com/5s10r2/claude-booking-bot/pull/30)). Then Phase 2 (paired) once the availability endpoint lands.
 - **Blocked on you:** **OSRM EC2 restart** (backend/AWS — bot is correct either way now, but a restart auto-upgrades R1 to precise "X min" labels). 2 product decisions (E3, AV-§2) when convenient.
 
 > **Live finding (2026-06-05):** `maps.rentok.com` OSRM is **down at the network level** on prod (EC2 stopped/terminated — confirmed with backend; the bot is the live consumer, backend's own OSRM refs are commented out). **C1 makes the bot correct regardless:** ranks by honest straight-line proximity, skips the dead host instantly via the breaker, self-heals when the EC2 returns. On restore, confirm the bot's Render `OSRM_API_KEY` + the OSRM param name (`api_key` vs `key`) — one live commute search flips labels "~X km" → "X min".
@@ -65,7 +66,7 @@ protection + the CI gate guard `main`.
 | **G-13** | Surface property lat/long. **✅ ALREADY DONE — verify-first found the "formatting only" label was stale.** Coords reach the user three ways: carousel `lat`/`lng` + `map_center` → Leaflet Map View; `google_map` deep link built in search.py:757 + property_details.py:161. No PR needed. | Rl | ✅ | — |
 | **G-20** | Surface support contacts. **✅ LIVE-VERIFIED 3/3 — bot-only, no config/backend change.** Verify-first (after PO note "we already take a comms contact at RentOk") found the source: `property.communication_contact` (= OxOtel's `7304531989`, public customer-care line; RentOk's own bot already shares it) + microsite `customer_support_*` — distinct from the hidden `personal_contact` (owner). `get_support_contact` surfaces it **only when asked/stuck** (per PO). Prod: search volunteered no number; "give me a number for ROHA VATIKA" → `7304531989`; owner `7977106781` never leaked. 21/21 hermetic. | Rl Gr | ✅ | [#47](https://github.com/5s10r2/claude-booking-bot/pull/47) |
 | **P1.7** | KYC generate-failure no longer reported as false success | H | ⏳ | [#30](https://github.com/5s10r2/claude-booking-bot/pull/30) |
-| **R8** | Intent-tuned ranking weight profiles per user. **Do after R1 + R5.** | Rf | ⬜ | — |
+| **R8** | Intent-tuned ranking weight profiles per user. `classify_intent` (deterministic: prefs + current message, conflict→None) picks budget/commute/amenity/quality-led; match_score scales each component by profile/balanced (balanced ≡ 1.0 → byte-identical default). Gender + deal-breaker never shift. 105-cell golden no-regression + reorder proofs, 26 assertions. | Rf | ✅ | [#50](https://github.com/5s10r2/claude-booking-bot/pull/50) |
 
 ---
 
@@ -160,11 +161,35 @@ Evidence so we never re-litigate or duplicate finished work.
 | Resilience | **C1 OSRM circuit breaker** — skip the dead routing host instantly (no 30s dead-air), honest straight-line fallback (no fabricated distances), self-heals on restore. Live-verified 4/4. | [#43](https://github.com/5s10r2/claude-booking-bot/pull/43) |
 | Personalization | **NAME-1** — `save_name` capture (web analog of WhatsApp profile name) + name directive threaded into all 4 agents; uses the user's first name naturally, persists it. Live-verified. | [#45](https://github.com/5s10r2/claude-booking-bot/pull/45) |
 | Support | **G-20** — `get_support_contact` shares the property's PUBLIC customer-care line (`communication_contact`) only when asked/stuck; owner's private number stays hidden. Bot-only, no config/backend change. Live-verified 3/3. | [#47](https://github.com/5s10r2/claude-booking-bot/pull/47) |
+| Ranking | **R8 intent-tuned profiles** — per-search weight profile (budget/commute/amenity/quality-led) from deliberate prefs + current message; balanced default is byte-identical to pre-R8 (structural). 105-cell golden + reorder proofs. | [#50](https://github.com/5s10r2/claude-booking-bot/pull/50) |
+| Test hygiene | **#49** — date-flaky quality-trend fixtures made relative to today (was reddening the shared CI gate for every PR). | [#49](https://github.com/5s10r2/claude-booking-bot/pull/49) |
 
 ---
 
 ## Session log (append-only)
 
+- **2026-06-06 (R8 intent ranking)** — Design pass first (PO sign-off: deterministic
+  heuristic · all 4 intents · moderate ~+40%). Verify-first surfaced two things the
+  tracker/labels didn't: (1) `search_properties(user_id, **kwargs)` gets **no message
+  text** — so budget/quality keyword detection reads the current message from Redis
+  conversation history (pipeline persists it at pipeline.py:66 BEFORE the agent runs;
+  confirmed). (2) the gate was actually **40, not 41** — and `test_quality_analytics.py`
+  was **date-flaky** (hardcoded fixture dates aged out of get_quality_trend's real
+  7-day window today → reddened the gate for ANY PR). Fixed that as a separate
+  prerequisite PR [#49](https://github.com/5s10r2/claude-booking-bot/pull/49) (date-relative `_day(n)` fixtures, 18/18), merged first.
+  R8 [#50](https://github.com/5s10r2/claude-booking-bot/pull/50): `WEIGHT_PROFILES` (5) + `classify_intent` (two tiers, message-first,
+  conflict→None) + `match_score(weights=)` that scales each component by
+  profile/balanced — so balanced multiplies by exactly 1.0 and no-regression is
+  **structural, not just tested**. Gender + deal-breaker never shift. `test_intent_ranking.py`
+  26 assertions incl. a 105-cell golden matrix snapshotted from pre-R8 match_score
+  + reorder proofs for all 4 intents; existing commute 26/26 + gender 50/50 stay
+  green. Gate **41/41**. Merged to main `ff0b2d4`. **Live-verified on prod** (same
+  Kurla search, only the anchor word changes): balanced 76/75/70/69/69 → budget-led
+  rewards the ₹9k Mass Metropolis (70→74, climbs above a ₹10k) → quality-led
+  63/61/56/56/55 (budget de-emphasized). The anchor word reordering the deck is
+  impossible under pre-R8 code → confirms both deploy-is-live and R8-works. Score
+  scales are deterministic given the same inputs; minor run-to-run variance came
+  from live transit/outcome signals under the down-OSRM environment (pre-existing).
 - **2026-06-05 (G-20 build)** — PO note "we already take a communication contact
   at RentOk" → verify-first found it: `property.communication_contact` (OxOtel =
   `7304531989`, a PUBLIC customer-care line the RentOk backend's own bot already
