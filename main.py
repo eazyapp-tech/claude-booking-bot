@@ -17,8 +17,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 import core.state as state
-from core.claude import AnthropicEngine
 from core.conversation import ConversationManager
+from core.model_router import ModelRouter
 from core.log import get_logger
 from core.rate_limiter import RateLimitExceeded
 from core.tool_executor import ToolExecutor
@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
     executor = ToolExecutor()
     executor.register_many(get_all_handlers())
 
-    state.engine = AnthropicEngine(tool_executor=executor)
+    state.engine = ModelRouter(tool_executor=executor)
     state.conversation = ConversationManager()
 
     # Auto-seed brand configs for known brands (idempotent)

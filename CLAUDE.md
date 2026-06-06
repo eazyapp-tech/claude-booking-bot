@@ -49,6 +49,8 @@ routers/admin.py     (750+) — GET /rate-limit/status; all /admin/* routes (ana
 ### Core Engine
 ```
 core/claude.py       (390+) — Anthropic API wrapper | AnthropicEngine@19, run_agent@24, run_agent_stream@95, classify@221, _build_system_blocks@286 (split prompt caching; prepends UNTRUSTED_CONTENT_RULE to the first cached block so every agent inherits the injection-defense rule); Phase C cancellation checkpoint between tool-call iterations in both run_agent() and run_agent_stream(). _usage_cost@~50 — cache-aware token+cost accounting: sums input_tokens + cache_creation + cache_read (cache writes billed 1.25x, reads 0.1x of base input rate); both end_turn blocks call it then fan out to increment_session_cost/increment_agent_cost/increment_daily_cost. ⚠️ Old code dropped cache fields → under-counted tokens AND spend on this cache-heavy app.
+core/litellm_engine.py (320+) — LiteLLM-backed engine for non-Anthropic model routing | LiteLLMEngine@class, run_agent@non-streaming, run_agent_stream@streaming. Same interface as AnthropicEngine. classify() raises NotImplementedError (supervisor always Anthropic). _parse_model_override: splits the override into (clean_model, extra_body) — optional OpenRouter provider pin via "@provider/quant" suffix, e.g. `openrouter/z-ai/glm-4.6@deepinfra/fp8` → extra_body {provider:{order:[deepinfra], quantizations:[fp8], allow_fallbacks:true}}; the quant is a hard quality FLOOR (fallback providers must serve it too); the clean model is used for BOTH the API call AND the COST_PER_MTK lookup so the suffix never leaks into cost. _to_openai_tools: Anthropic input_schema → OpenAI parameters. _to_openai_messages: Anthropic tool_result/tool_use blocks → OpenAI role="tool" + tool_calls. Phase C cancellation checkpoint included. Cost tracking via _track_cost/_track_cost_usage (prompt_tokens/completion_tokens, no cache multipliers for non-Anthropic models); streaming path sets stream_options.include_usage and captures the final usage chunk so web-channel GLM cost is NOT under-counted. Model strings follow LiteLLM provider-prefix convention: openrouter/google/..., gemini/..., etc. Requires litellm>=1.50.0 in requirements.txt and OPENROUTER_API_KEY in env.
+core/model_router.py  (100+) — Transparent engine wrapper with per-brand Redis model overrides | ModelRouter@class — lazy-init both engines, _pick_engine() reads brand-scoped then global Redis override, delegates run_agent/run_agent_stream to LiteLLMEngine when override active (with override model), else AnthropicEngine. classify() always delegates to Anthropic — supervisor is never overridden. Exposes same interface as AnthropicEngine. main.py instantiates ModelRouter instead of AnthropicEngine.
 core/prompts.py      (640+) — All system prompts (PRODUCT) | build_broker_prompt@329 (legacy monolithic assembly), build_name_directive@~55 (NAME-1: short UNCACHED personalization line — first-name only — appended to every agent's system prompt; "" when name unknown so the cached prefix stays byte-identical), format_prompt@494 (template vars incl. feature-flag-driven: {kyc_reservation_flow}, {reserve_option}, {token_value_line}, {post_visit_reserve_cta}). SUPERVISOR_PROMPT includes broker skill detection. Legacy broker prompt split into 13 named modules (kept for DYNAMIC_SKILLS_ENABLED=false fallback)
 core/conversation.py (36)   — History load/save + compaction | ConversationManager@4; brand_hash threaded to save_conversation + maybe_summarize
 core/summarizer.py   (270+) — Token management | maybe_summarize@160 (threshold: 30 msgs, keep 10 recent; brand context injected when brand_hash provided)
@@ -122,7 +124,7 @@ db/redis/user.py     (451)  — User memory, preferences, shortlist, followups, 
 db/redis/property.py (111)  — Property cache, images, templates, last-search cache | property_info_map ops, get_property_template@60
 db/redis/payment.py  (114)  — Payment link + active request dedup | get_active_request@5, set_active_request@15, get_payment_link@50
 db/redis/analytics.py (500+) — Funnel events, feedback, agent/skill usage, costs, property events | ALL functions dual-write: global + brand-scoped (brand_hash param). track_funnel@5, get_funnel@40, save_feedback@80, get_feedback_counts@95, track_agent_usage@110, track_skill_usage@130, track_skill_miss@145, increment_agent_cost@155, get_agent_costs@175, increment_daily_cost@185, get_daily_cost@195, track_property_event@430, get_property_events@450, get_property_performance@465
-db/redis/brand.py    (80+)  — Brand config + WA reverse-lookup + brand token + per-brand flags | get_brand_config@5, set_brand_config@20, get_brand_config_by_hash@45, get_brand_flags@55, set_brand_flag@60, get_effective_flags@68 (merges brand overrides over global defaults)
+db/redis/brand.py    (125+) — Brand config + WA reverse-lookup + brand token + per-brand flags + model overrides | get_brand_config@5, set_brand_config@20, get_brand_config_by_hash@45, get_brand_flags@55, set_brand_flag@60, get_effective_flags@68 (merges brand overrides over global defaults), get_model_override@100, set_model_override@109, clear_model_override@113, get_all_model_overrides@117. Redis key: model_override:{brand_hash|global}:{agent_name}.
 db/redis/admin.py    (120+) — Active users (global + per-brand), human mode (per-brand scoped), session cost | set_user_brand@38, get_user_brand@43, add_to_brand_active_users@49, get_brand_active_users@54, get_brand_active_users_count@60, get_human_mode@69 (brand-scoped + global fallback), set_human_mode@85, clear_human_mode@91, increment_session_cost@105 (signature: uid, tokens_in, tokens_out, cost_usd — cost is PRECOMPUTED by core.claude._usage_cost so cache reads/writes bill at correct multipliers; do NOT recompute here at full input rate)
 db/redis/idempotency.py (67) — Burst-dedup primitives for write-path tools (Wave 3) | idem_begin@30 (returns (cached_result, acquired): cached→replay, (None,True)→first caller runs, (None,False)→in-flight, tell user to wait), idem_complete@45 (cache result + release lock), idem_release@51 (release lock without caching — failed exec stays retryable), idem_clear@56 (Wave A — drop BOTH lock AND cached result; cancel.py uses it so a reserve→cancel→reserve runs fresh instead of replaying the stale "reserved" result). SET-NX lock pattern mirrors wa_processing_acquire. ⚠️ Re-exported via BOTH db/redis/__init__.py AND db/redis_store.py (explicit import list, NOT `import *`) — a new symbol needs adding to both or imports silently ImportError.
 db/redis/__init__.py (200+) — Re-exports ALL public symbols from all 10 domain modules (backward-compat)
@@ -301,7 +303,17 @@ api/documents.js       — GET/POST/DELETE /api/documents?propId=X[&docId=Y] →
 api/flags.js           — GET/POST /api/flags → GET/POST /admin/flags
 api/broadcast.js       — POST /api/broadcast → POST /admin/broadcast
 api/brand-config.js    — GET/POST /api/brand-config → GET/POST /admin/brand-config (passes X-API-Key through; Edge runtime)
+api/model-routing.js   — GET/POST /api/model-routing → GET/POST /admin/model-routing (Edge runtime)
 ```
+
+### New Redis Keys (Model Routing)
+```
+model_override:{brand_hash}:{agent_name}   String, no TTL — per-brand LLM model override for an agent (LiteLLM model string, e.g. openrouter/google/gemini-pro-1.5-flash)
+model_override:global:{agent_name}         String, no TTL — global model override (applies to all brands that have no brand-specific override)
+```
+Routable agents: broker, booking, profile, default. Supervisor is NEVER overridden.
+Read by ModelRouter._pick_engine() on every agent call. Brand override > global override > default (no override = AnthropicEngine with configured model).
+Admin endpoints: GET /admin/model-routing, POST /admin/model-routing. Admin panel: Settings → Model Routing section.
 
 ### New Redis Keys (Sprint 1–3)
 ```
@@ -412,6 +424,8 @@ POST /admin/brand-config                              — create/update brand co
 POST /admin/backfill-brands                           — one-time migration: tag existing users with OxOtel brand_hash
 POST /admin/leads/{uid}/outcome                        — mark lead outcome (converted/lost/no_show/in_progress); fires side effects
 GET  /admin/errors                                     — paginated error events with type/days filters + summary (brand-scoped)
+GET  /admin/model-routing                              — per-agent model overrides (brand-scoped + global) + routable agent list
+POST /admin/model-routing                              — set or clear a brand-scoped model override {agent, model: string|null}; supervisor not routable
 GET  /brand-config?token={uuid}                       — PUBLIC, no auth — returns safe fields only (pg_ids, brand_name, cities, areas, brand_hash)
 ```
 
@@ -426,7 +440,7 @@ GET  /brand-config?token={uuid}                       — PUBLIC, no auth — re
 - **Models**: Broker=Haiku (`claude-haiku-4-5-20251001`), Others=Sonnet (`claude-sonnet-4-6`)
 - **Feature flags**: `KYC_ENABLED=false`, `PAYMENT_REQUIRED=false`, `DYNAMIC_SKILLS_ENABLED=true`, `SEMANTIC_KB_ENABLED=false` — global defaults, overridable per-brand via admin panel (stored in `brand_flags:{brand_hash}`)
 - **Rate limits**: 6/min per user, 30/hr per user, 100/min global
-- **New env vars**: `OSRM_API_KEY` (OSRM routing), `TAVILY_API_KEY` (optional, web search), `WEB_SEARCH_MAX_PER_CONVERSATION=3`, `NOMIC_API_KEY` (Nomic Atlas — semantic KB embeddings, optional)
+- **New env vars**: `OSRM_API_KEY` (OSRM routing), `TAVILY_API_KEY` (optional, web search), `WEB_SEARCH_MAX_PER_CONVERSATION=3`, `NOMIC_API_KEY` (Nomic Atlas — semantic KB embeddings, optional), `OPENROUTER_API_KEY` (optional; enables LiteLLMEngine for model bake-offs via OpenRouter; set before activating any model override in admin panel)
 - **Webhook signing secrets (optional, activate HMAC enforcement)**: `WHATSAPP_APP_SECRET` (Meta app secret → enforces X-Hub-Signature-256 on POST /webhook/whatsapp), `PAYMENT_WEBHOOK_SECRET` (→ enforces X-Webhook-Signature on POST /webhook/payment). When unset, both webhooks fall back to legacy X-API-Key auth.
 - **Brand config env var**: `CHAT_BASE_URL` on backend (default: `https://eazypg-chat.vercel.app`) — used to build chatbot URL returned by GET /admin/brand-config
 - **Web-channel default brand**: `DEFAULT_BRAND_API_KEY` (default: `OxOtel1234`) — brand resolved server-side for tokenless/demo web traffic (no `?brand=` link). Never trust client `brand_hash`.

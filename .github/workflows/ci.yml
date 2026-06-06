@@ -74,7 +74,8 @@ jobs:
             test_support_contact.py \
             test_accounts_signup.py \
             test_kyc_honesty.py \
-            test_payment_uuid_retry.py; do
+            test_payment_uuid_retry.py \
+            test_model_router.py; do
             echo "::group::$t"
             python "$t"
             echo "::endgroup::"

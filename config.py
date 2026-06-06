@@ -47,11 +47,17 @@ class Settings(BaseSettings):
     HAIKU_MODEL: str = "claude-haiku-4-5-20251001"
     SONNET_MODEL: str = "claude-sonnet-4-6"
 
+    # OpenRouter (model gateway for bake-offs)
+    OPENROUTER_API_KEY: Optional[str] = None
+
     # Cost per million tokens (USD) — base input/output rates; cache reads
     # billed 0.1x and cache writes 1.25x via core.claude._usage_cost
     COST_PER_MTK: dict = {
         "claude-haiku-4-5-20251001": {"in": 0.80,  "out": 4.00},
         "claude-sonnet-4-6":         {"in": 3.00,  "out": 15.00},
+        # Non-Anthropic bake-off models (via OpenRouter / LiteLLM). Keys MUST match
+        # the LiteLLM model string set as the override. Verified OpenRouter rates.
+        "openrouter/z-ai/glm-4.6":   {"in": 0.43,  "out": 1.74},
     }
 
     # API auth (set in .env; if empty, auth is disabled)

@@ -850,6 +850,62 @@ async def admin_set_flags(request: Request, brand_hash: str = Depends(require_ad
 
 
 # ---------------------------------------------------------------------------
+# Model routing — per-brand LLM overrides (bake-off / A/B switching)
+# ---------------------------------------------------------------------------
+
+_ROUTABLE_AGENTS = ("broker", "booking", "profile", "default")
+
+
+@router.get("/admin/model-routing")
+async def admin_get_model_routing(brand_hash: str = Depends(require_admin_brand_key)):
+    """Return active model overrides for this brand (brand-scoped → global → none)."""
+    from db.redis.brand import get_model_override
+    result = {}
+    for agent in _ROUTABLE_AGENTS:
+        brand_override = get_model_override(agent, brand_hash)
+        global_override = get_model_override(agent, None)
+        result[agent] = {
+            "brand_override": brand_override,
+            "global_override": global_override,
+            "active": brand_override or global_override,
+        }
+    return {
+        "agents": result,
+        "routable": list(_ROUTABLE_AGENTS),
+        "openrouter_configured": bool(settings.OPENROUTER_API_KEY),  # never the key itself
+    }
+
+
+@router.post("/admin/model-routing")
+async def admin_set_model_routing(request: Request, brand_hash: str = Depends(require_admin_brand_key)):
+    """Set or clear a per-brand model override.
+
+    Body: { "agent": "broker", "model": "openrouter/google/gemini-pro-1.5-flash" }
+    To clear: { "agent": "broker", "model": null }
+
+    Supervisor is always Anthropic and cannot be overridden.
+    """
+    from db.redis.brand import set_model_override, clear_model_override, get_model_override
+    body = await request.json()
+    agent = body.get("agent", "").strip()
+    model = body.get("model")  # None → clear
+
+    if agent not in _ROUTABLE_AGENTS:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"agent must be one of: {', '.join(_ROUTABLE_AGENTS)}")
+
+    if model:
+        set_model_override(agent, str(model), brand_hash)
+        logger.info("model override set: agent=%s brand=%s model=%s", agent, brand_hash, model)
+    else:
+        clear_model_override(agent, brand_hash)
+        logger.info("model override cleared: agent=%s brand=%s", agent, brand_hash)
+
+    active = get_model_override(agent, brand_hash) or get_model_override(agent, None)
+    return {"ok": True, "agent": agent, "active": active}
+
+
+# ---------------------------------------------------------------------------
 # Admin login (ID + password → brand API key). No auth dependency — this IS
 # the gate. Credentials validated server-side; the raw key never ships in the
 # frontend bundle. See core/admin_login.py.

@@ -8,9 +8,9 @@ and stored here so routers can import them without circular imports.
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.claude import AnthropicEngine
+    from core.model_router import ModelRouter
     from core.conversation import ConversationManager
 
 # Populated by main.py lifespan on startup
-engine: "AnthropicEngine | None" = None
+engine: "ModelRouter | None" = None
 conversation: "ConversationManager | None" = None

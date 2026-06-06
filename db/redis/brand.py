@@ -84,6 +84,45 @@ def set_brand_flag(brand_hash: str, flag: str, value: bool) -> None:
     _json_set(f"brand_flags:{brand_hash}", flags)
 
 
+# ---------------------------------------------------------------------------
+# Per-brand model routing overrides
+# ---------------------------------------------------------------------------
+
+# Agents that can be overridden (supervisor is always Anthropic — never swap it)
+_ROUTABLE_AGENTS = ("broker", "booking", "profile", "default")
+
+
+def _override_key(agent_name: str, brand_hash: str | None) -> str:
+    prefix = brand_hash if brand_hash else "global"
+    return f"model_override:{prefix}:{agent_name}"
+
+
+def get_model_override(agent_name: str, brand_hash: str | None = None) -> str | None:
+    """Return the active model override for an agent+brand, or None."""
+    raw = _r().get(_override_key(agent_name, brand_hash))
+    if raw is None:
+        return None
+    return raw.decode() if isinstance(raw, bytes) else raw
+
+
+def set_model_override(agent_name: str, model: str, brand_hash: str | None = None) -> None:
+    _r().set(_override_key(agent_name, brand_hash), model)
+
+
+def clear_model_override(agent_name: str, brand_hash: str | None = None) -> None:
+    _r().delete(_override_key(agent_name, brand_hash))
+
+
+def get_all_model_overrides(brand_hash: str | None = None) -> dict:
+    """Return {agent_name: override_model} for all routable agents that have an override."""
+    result = {}
+    for agent in _ROUTABLE_AGENTS:
+        override = get_model_override(agent, brand_hash)
+        if override:
+            result[agent] = override
+    return result
+
+
 def get_effective_flags(brand_hash: str | None = None) -> dict:
     """Merge brand overrides over global defaults. Returns all flag values.
 

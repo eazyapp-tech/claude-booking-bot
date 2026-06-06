@@ -179,6 +179,11 @@ from db.redis.brand import (  # noqa: F401
     get_brand_flags,
     set_brand_flag,
     get_effective_flags,
+    # Per-brand model routing overrides
+    get_model_override,
+    set_model_override,
+    clear_model_override,
+    get_all_model_overrides,
 )
 
 # Admin domain
