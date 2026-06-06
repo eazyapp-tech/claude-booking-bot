@@ -56,8 +56,13 @@ class Settings(BaseSettings):
         "claude-haiku-4-5-20251001": {"in": 0.80,  "out": 4.00},
         "claude-sonnet-4-6":         {"in": 3.00,  "out": 15.00},
         # Non-Anthropic bake-off models (via OpenRouter / LiteLLM). Keys MUST match
-        # the LiteLLM model string set as the override. Verified OpenRouter rates.
-        "openrouter/z-ai/glm-4.6":   {"in": 0.43,  "out": 1.74},
+        # the LiteLLM model string set as the override (suffix-exact). Verified
+        # OpenRouter rates. `:exacto` = OpenRouter's tool-calling-tuned GLM-4.6
+        # variant (the one that actually emits correct tool names; plain auto-routed
+        # GLM-4.6 can land on an endpoint that truncates them). NOTE: DeepInfra does
+        # NOT serve GLM-4.6 on OpenRouter — do not pin `@deepinfra`.
+        "openrouter/z-ai/glm-4.6":          {"in": 0.43,  "out": 1.74},
+        "openrouter/z-ai/glm-4.6:exacto":   {"in": 0.43,  "out": 1.74},
     }
 
     # API auth (set in .env; if empty, auth is disabled)
