@@ -27,11 +27,17 @@ from db.redis_store import (
     get_user_memory,
     get_user_brand,
     track_property_event,
+    get_conversation,
     _r as _redis,
 )
 from utils.api import parse_amenities, parse_sharing_types, parse_sharing_types_structured
 from utils.geo import geocode_address, haversine_km
-from utils.scoring import match_score as calc_match_score, gender_compatible_listing
+from utils.scoring import (
+    match_score as calc_match_score,
+    gender_compatible_listing,
+    classify_intent,
+    WEIGHT_PROFILES,
+)
 
 
 SEARCH_CACHE_TTL = 900  # 15 minutes
@@ -470,6 +476,30 @@ async def _compute_commute_minutes(properties: list, destination: str,
                 assigned, len(targets), dest)
 
 
+def _last_user_message(user_id: str) -> str:
+    """Best-effort read of the user's most recent message text from conversation
+    history (already persisted by the pipeline before the agent runs). Used only
+    to flavour R8 intent classification; any failure → "" → balanced ranking."""
+    try:
+        conv = get_conversation(user_id)
+        for msg in reversed(conv):
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                for blk in content:
+                    if isinstance(blk, dict) and blk.get("type") == "text":
+                        return blk.get("text", "")
+                    if isinstance(blk, str):
+                        return blk
+            return ""
+    except Exception:
+        pass
+    return ""
+
+
 async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -> str:
     prefs = get_preferences(user_id)
     if not prefs.get("location"):
@@ -612,6 +642,14 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
     # Load property outcome signals (conversion/no-show) — observably, never blind.
     prop_signals = _load_property_signals(properties)
 
+    # R8 — intent-tuned ranking. Pick a weight profile from the user's deliberate
+    # prefs + their CURRENT message (read from conversation history; the pipeline
+    # persists it before the agent runs). Absent/ambiguous intent → None → the
+    # `balanced` profile → byte-identical to pre-R8 scoring. Observable, never blind.
+    intent = classify_intent(prefs, _last_user_message(user_id))
+    intent_weights = WEIGHT_PROFILES.get(intent) if intent else None
+    logger.info("ranking intent profile: %s", intent or "balanced")
+
     def _score(p: dict, commute_aware: bool = False) -> float:
         prop_data = {
             "rent": p.get("p_rent_starts_from", p.get("rent", 0)),
@@ -630,7 +668,8 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
         pid = p.get("p_property_id", p.get("property_id", ""))
         signals = prop_signals.get(pid, {})
         return calc_match_score(prop_data, scoring_prefs,
-                                deal_breakers=deal_breakers, property_signals=signals)
+                                deal_breakers=deal_breakers, property_signals=signals,
+                                weights=intent_weights)
 
     for p in properties:
         p["_custom_score"] = _score(p)

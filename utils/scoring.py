@@ -13,6 +13,85 @@ from typing import Optional
 
 
 # ---------------------------------------------------------------------------
+# R8 — Intent-tuned ranking weight profiles
+#
+# Each profile is the per-component point cap match_score() uses. `balanced` is
+# the literal default (== the pre-R8 fixed weights) and is what an absent or
+# ambiguous intent falls back to, so the default path is byte-identical to
+# today. A named profile boosts the lever its intent cares about (~+40%) and
+# trims the rest, holding the positive envelope near 100 so indicator()'s
+# Excellent/Good/Fair thresholds keep their meaning across intents.
+#
+# match_score scales each component by (profile_cap / balanced_cap), so the
+# `balanced` profile multiplies every component by exactly 1.0 — no-regression
+# is structural, not just tested. Gender (hard constraint) and the deal-breaker
+# penalty (user veto) are deliberately NOT in the profile: they never shift.
+# ---------------------------------------------------------------------------
+
+WEIGHT_PROFILES: dict[str, dict[str, float]] = {
+    # component →            budget  commute  pin-dist  amenity  type  transit  outcome  no-show
+    "balanced":    {"budget": 30, "prox_commute": 25, "prox_distance": 20, "amenity": 30, "property_type": 10, "transit": 5, "outcome_max": 9, "noshow": 5},
+    "budget-led":  {"budget": 42, "prox_commute": 20, "prox_distance": 16, "amenity": 22, "property_type": 8, "transit": 3, "outcome_max": 6, "noshow": 5},
+    "commute-led": {"budget": 22, "prox_commute": 38, "prox_distance": 30, "amenity": 22, "property_type": 8, "transit": 5, "outcome_max": 6, "noshow": 5},
+    "amenity-led": {"budget": 22, "prox_commute": 20, "prox_distance": 16, "amenity": 42, "property_type": 8, "transit": 3, "outcome_max": 6, "noshow": 5},
+    "quality-led": {"budget": 20, "prox_commute": 22, "prox_distance": 18, "amenity": 26, "property_type": 10, "transit": 5, "outcome_max": 15, "noshow": 10},
+}
+_BALANCED = WEIGHT_PROFILES["balanced"]
+
+
+# Free-text intent anchors in the user's CURRENT message. Word-boundary matched
+# (\b) so substrings never misfire ("top" inside "rooftop"/"topiary" is inert).
+# Kept deliberately tight — a bare budget number ("my budget is 12k") is NOT a
+# budget-LED signal; only an explicit anchor word is.
+_BUDGET_RE = re.compile(
+    r"\b(cheap|cheapest|affordable|economical|inexpensive|lowest|"
+    r"budget[- ]friendly|pocket[- ]friendly|low[- ]budget|least expensive)\b"
+)
+_QUALITY_RE = re.compile(
+    r"\b(best|nicest|premium|luxury|luxurious|high[- ]end|upscale|posh|finest|"
+    r"well[- ]rated|highly rated|top[- ]rated|best quality)\b"
+)
+
+
+def classify_intent(preferences: dict, message: str = "") -> Optional[str]:
+    """Pick the ranking intent for this search — deterministic, no LLM.
+
+    Two tiers, freshest-first:
+      1. The CURRENT message (transient priority): a budget anchor → budget-led,
+         a quality anchor → quality-led. Both anchors at once → ambiguous → None.
+      2. Persistent deliberate preferences (the fallback): a saved commute
+         destination → commute-led, ≥2 must-have amenities → amenity-led. Both
+         set → ambiguous → None.
+
+    Returns one of budget-led / commute-led / amenity-led / quality-led, or
+    None when no signal fires OR signals conflict — so the caller uses the
+    balanced (byte-identical) profile and we only ever specialize when confident.
+    """
+    msg = (message or "").lower()
+
+    # Tier 1 — current message wins (it's the freshest expressed priority).
+    msg_intents = []
+    if _BUDGET_RE.search(msg):
+        msg_intents.append("budget-led")
+    if _QUALITY_RE.search(msg):
+        msg_intents.append("quality-led")
+    if len(msg_intents) == 1:
+        return msg_intents[0]
+    if len(msg_intents) >= 2:
+        return None  # mixed ask (e.g. "best cheap PG") → stay balanced
+
+    # Tier 2 — persistent preferences.
+    pref_intents = []
+    if (preferences.get("commute_from") or "").strip():
+        pref_intents.append("commute-led")
+    if len(_parse_amenities(preferences.get("must_have_amenities", ""))) >= 2:
+        pref_intents.append("amenity-led")
+    if len(pref_intents) == 1:
+        return pref_intents[0]
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Fuzzy amenity aliases — covers ~95% of real-world mismatches
 # ---------------------------------------------------------------------------
 
@@ -165,10 +244,11 @@ def match_score(
     deal_breakers: Optional[list] = None,
     near_transit: bool = False,
     property_signals: Optional[dict] = None,
+    weights: Optional[dict] = None,
 ) -> float:
     """Calculate a 0-100 match score between a property and user preferences.
 
-    Scoring components:
+    Scoring components (default caps; `weights` rescales them per intent — R8):
     - Budget match (0-30 pts)
     - Proximity (0-25 pts): real driving minutes to the user's destination
       (property_data["commute_minutes"]) → else straight-line km to it
@@ -179,7 +259,14 @@ def match_score(
     - Gender match (0-10 pts)
     - Transit proximity bonus (+5 if near metro/rail)
     - Deal-breaker penalty (-15 per match)
+
+    `weights`: an intent profile from WEIGHT_PROFILES (see classify_intent).
+    None → `balanced` → byte-identical to the pre-R8 fixed weights. Each
+    component's sub-score is scaled by (profile_cap / balanced_cap), so the
+    balanced profile multiplies everything by exactly 1.0. Gender and the
+    deal-breaker penalty are never rescaled.
     """
+    w = weights or _BALANCED
     score = 0.0
 
     # Budget match (30 pts)
@@ -189,13 +276,14 @@ def match_score(
 
     if prop_rent > 0:
         if min_budget <= prop_rent <= max_budget:
-            score += 30
+            budget_pts = 30
         elif prop_rent < min_budget:
             diff_pct = (min_budget - prop_rent) / max(min_budget, 1)
-            score += max(0, 30 - diff_pct * 30)
+            budget_pts = max(0, 30 - diff_pct * 30)
         else:
             diff_pct = (prop_rent - max_budget) / max(max_budget, 1)
-            score += max(0, 30 - diff_pct * 60)
+            budget_pts = max(0, 30 - diff_pct * 60)
+        score += budget_pts * (w["budget"] / 30)
 
     # Proximity score (≤25 pts) — by REAL commute time when known, else by distance.
     # If the user told us their daily destination (office/college) we rank by actual
@@ -207,38 +295,44 @@ def match_score(
     commute_min = property_data.get("commute_minutes")
     commute_km = property_data.get("commute_km")
     if commute_min is not None:
-        # Precise driving time to the destination (OSRM).
+        # Precise driving time to the destination (OSRM). Office-proximity cap.
         cm = _parse_number(commute_min)
         if cm <= 15:
-            score += 25
+            prox_pts = 25
         elif cm <= 30:
-            score += 25 - (cm - 15) * (10.0 / 15.0)   # 25 → 15
+            prox_pts = 25 - (cm - 15) * (10.0 / 15.0)   # 25 → 15
         elif cm <= 60:
-            score += max(0.0, 15 - (cm - 30) * 0.5)    # 15 → 0
-        # Beyond 60 min, 0 points — too far to count as proximity
+            prox_pts = max(0.0, 15 - (cm - 30) * 0.5)    # 15 → 0
+        else:
+            prox_pts = 0.0                                # beyond 60 min, too far
+        score += prox_pts * (w["prox_commute"] / 25)
     elif commute_km is not None:
         # Straight-line distance to the destination (honest fallback when the
         # routing service is unavailable). Still office-proximity — the R1 signal
         # — just measured as the crow flies instead of by road.
         km = _parse_number(commute_km)
         if km <= 2:
-            score += 25
+            prox_pts = 25
         elif km <= 5:
-            score += 25 - (km - 2) * (10.0 / 3.0)      # 25 → 15
+            prox_pts = 25 - (km - 2) * (10.0 / 3.0)      # 25 → 15
         elif km <= 12:
-            score += max(0.0, 15 - (km - 5) * (15.0 / 7.0))  # 15 → 0
-        # Beyond 12 km, 0 points
+            prox_pts = max(0.0, 15 - (km - 5) * (15.0 / 7.0))  # 15 → 0
+        else:
+            prox_pts = 0.0                                # beyond 12 km
+        score += prox_pts * (w["prox_commute"] / 25)
     else:
         distance = property_data.get("distance", property_data.get("distanceBwPropertyAndSearchArea"))
         if distance is not None:
             dist_km = _parse_number(distance) / 1000.0
             if dist_km <= 2:
-                score += 20
+                dist_pts = 20
             elif dist_km <= 5:
-                score += max(0, 20 - (dist_km - 2) * 4)
+                dist_pts = max(0, 20 - (dist_km - 2) * 4)
             elif dist_km <= 10:
-                score += max(0, 8 - (dist_km - 5))
-            # Beyond 10km, 0 points
+                dist_pts = max(0, 8 - (dist_km - 5))
+            else:
+                dist_pts = 0                              # beyond 10 km
+            score += dist_pts * (w["prox_distance"] / 20)
 
     # Amenity overlap (30 pts) — with weighted must-have / nice-to-have
     must_have = _parse_amenities(preferences.get("must_have_amenities", ""))
@@ -272,18 +366,18 @@ def match_score(
         else:
             amenity_score += 5  # neutral
 
-        score += min(30, amenity_score)
+        score += min(30, amenity_score) * (w["amenity"] / 30)
     else:
-        score += 15  # No preference = neutral
+        score += 15 * (w["amenity"] / 30)  # No preference = neutral
 
     # Property type match (10 pts)
     pref_type = (preferences.get("property_type") or "").lower()
     prop_type = (property_data.get("property_type") or "").lower()
     if pref_type and prop_type:
-        if pref_type in prop_type or prop_type in pref_type:
-            score += 10
+        type_pts = 10 if (pref_type in prop_type or prop_type in pref_type) else 0
     else:
-        score += 5  # No preference
+        type_pts = 5  # No preference
+    score += type_pts * (w["property_type"] / 10)
 
     # Gender match (10 pts)
     pref_gender = (preferences.get("pg_available_for") or "").lower()
@@ -296,7 +390,7 @@ def match_score(
 
     # Transit proximity bonus (+5 if property is near metro/rail station)
     if near_transit:
-        score += 5
+        score += w["transit"]
 
     # Deal-breaker penalty (-15 per match, from cross-session memory)
     if deal_breakers:
@@ -323,12 +417,12 @@ def match_score(
     if property_signals:
         converted = property_signals.get("converted", 0)
         no_show = property_signals.get("no_show", 0)
-        # Social proof: conversions boost confidence (+3 per conversion, max +9)
+        # Social proof: conversions boost confidence (+3 per conversion, capped)
         if converted > 0:
-            score += min(converted * 3, 9)
-        # Risk signal: repeated no-shows suggest property issues (-5 if 2+)
+            score += min(converted * 3, w["outcome_max"])
+        # Risk signal: repeated no-shows suggest property issues (penalty if 2+)
         if no_show >= 2:
-            score -= 5
+            score -= w["noshow"]
 
     return round(min(100, max(0, score)), 1)
 
