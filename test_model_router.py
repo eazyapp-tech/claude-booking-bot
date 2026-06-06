@@ -27,9 +27,12 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 os.environ.setdefault("OPENROUTER_API_KEY", "")  # default: key absent
 
 import config  # noqa: E402
+import types  # noqa: E402
 from core.litellm_engine import (  # noqa: E402
     EngineError,
     _parse_model_override,
+    _with_openrouter_defaults,
+    _final_text,
     _to_openai_tools,
     _to_openai_messages,
 )
@@ -82,13 +85,41 @@ def test_parse():
     # Cost lookup must resolve on the CLEAN model, suffix-free.
     m, _ = _parse_model_override("openrouter/z-ai/glm-4.6@deepinfra/fp8")
     rates = config.settings.COST_PER_MTK.get(m)
-    check("cost lookup resolves on clean model", rates == {"in": 0.43, "out": 1.74})
+    check("cost lookup resolves on clean model", rates == {"in": 0.55, "out": 2.20})
 
     # The :exacto variant (working tool-calling config) has its own cost entry —
     # _parse leaves it intact (no @) so the lookup is suffix-exact.
     m, eb = _parse_model_override("openrouter/z-ai/glm-4.6:exacto")
     check(":exacto left intact (no @)", m == "openrouter/z-ai/glm-4.6:exacto" and eb is None)
-    check(":exacto has cost entry", config.settings.COST_PER_MTK.get(m) == {"in": 0.43, "out": 1.74})
+    check(":exacto has cost entry", config.settings.COST_PER_MTK.get(m) == {"in": 0.55, "out": 2.20})
+
+
+# ---------------------------------------------------------------------------
+# [A2] OpenRouter non-thinking default + empty-content fallback
+# ---------------------------------------------------------------------------
+def test_openrouter_defaults():
+    # OpenRouter model, no extra → reasoning disabled (non-thinking mode)
+    eb = _with_openrouter_defaults("openrouter/z-ai/glm-4.6", None)
+    check("openrouter → reasoning disabled", eb == {"reasoning": {"enabled": False}})
+
+    # OpenRouter + provider pin → reasoning merged alongside provider routing
+    eb = _with_openrouter_defaults("openrouter/z-ai/glm-4.6", {"provider": {"order": ["novita"]}})
+    check("openrouter pin → provider kept", eb["provider"]["order"] == ["novita"])
+    check("openrouter pin → reasoning added", eb["reasoning"] == {"enabled": False})
+
+    # Non-openrouter model → untouched (don't send reasoning to providers that may reject it)
+    check("non-openrouter → unchanged None", _with_openrouter_defaults("claude-haiku-4-5", None) is None)
+    check("non-openrouter → unchanged dict",
+          _with_openrouter_defaults("gemini/x", {"a": 1}) == {"a": 1})
+
+    # _final_text: content wins; else reasoning_content; else reasoning; else ""
+    check("final_text content", _final_text(types.SimpleNamespace(content="hi", reasoning_content="r")) == "hi")
+    check("final_text → reasoning_content when content empty",
+          _final_text(types.SimpleNamespace(content="", reasoning_content="ans")) == "ans")
+    check("final_text → reasoning when content+rc empty",
+          _final_text(types.SimpleNamespace(content=None, reasoning_content=None, reasoning="ans2")) == "ans2")
+    check("final_text → '' when all empty",
+          _final_text(types.SimpleNamespace(content=None)) == "")
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +296,7 @@ async def test_router():
 
 def main():
     test_parse()
+    test_openrouter_defaults()
     test_format()
     asyncio.run(test_router())
     print(f"\n{passed} passed, {failed} failed")
