@@ -10,6 +10,7 @@ from utils.api import user_error
 from utils.date import transcribe_date
 from utils.properties import find_property as _find_property
 from utils.retry import http_post
+from tools.booking.notify_manager import fire_booking_notification
 
 logger = get_logger("tools.schedule_visit")
 
@@ -172,6 +173,12 @@ async def save_visit_time(
             )
 
     record_signal(booking_held=True, crm_synced=True)
+
+    # SILO — tell the manager a visit just landed (owner + team FCM). Background
+    # fire-and-forget (reached only here, after a confirmed booking + CRM lead); it
+    # never delays or breaks the user's confirmation.
+    fire_booking_notification("visit", user_id, pg_id, pg_number, prop_display, visit_date, visit_time)
+
     return (
         f"Visit scheduled successfully for '{prop_display}' "
         f"on {visit_date} at {visit_time} ({visit_type}).{location_info}"

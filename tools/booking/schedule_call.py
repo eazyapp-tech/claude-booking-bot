@@ -5,6 +5,7 @@ from utils.api import user_error
 from utils.date import transcribe_date
 from utils.properties import find_property as _find_property
 from utils.retry import http_post
+from tools.booking.notify_manager import fire_booking_notification
 
 logger = get_logger("tools.schedule_call")
 
@@ -108,6 +109,10 @@ async def save_call_time(
                 f"Our team will reach out to you{' on ' + phone if phone else ''} to confirm. "
                 f"We apologize for the inconvenience!"
             )
+
+    # SILO — tell the manager a callback request landed (owner + team FCM). Background
+    # fire-and-forget; reached only after a confirmed booking + CRM lead.
+    fire_booking_notification("call", user_id, pg_id, pg_number, prop_display, visit_date, visit_time)
 
     return (
         f"{visit_type} scheduled successfully for '{prop_display}' "
