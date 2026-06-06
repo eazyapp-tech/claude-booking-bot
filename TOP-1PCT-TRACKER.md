@@ -46,7 +46,7 @@ protection + the CI gate guard `main`.
 - **Last shipped:** **NAME-1** — name capture + personalization ✅ ([#45](https://github.com/5s10r2/claude-booking-bot/pull/45), `8921fb5`). Live-verified: bot captures a volunteered name, uses it by first name across turns, persists it. Preceded by **C1** — OSRM circuit breaker + honest straight-line fallback ✅ ([#43](https://github.com/5s10r2/claude-booking-bot/pull/43)). **Live-verified 4/4** (R1 intact via osrm_get; estimate_commute 30s dead-air eliminated — 0 new timeouts across 3 commute Qs). Preceded by **R1 commute ranking** (marquee) ✅ #37/#38/#39 + eazypg-chat#8, live 10/10.
 - **Last shipped:** **R8** — intent-tuned ranking weight profiles ✅ **LIVE-VERIFIED** ([#50](https://github.com/5s10r2/claude-booking-bot/pull/50), `ff0b2d4`). Design signed off (deterministic heuristic · all 4 intents · moderate ~+40%). `classify_intent` picks budget/commute/amenity/quality-led from deliberate prefs + the current message (read from Redis history); absent/ambiguous → balanced → **byte-identical to pre-R8** (structural: every component scaled by weight/default = 1.0). 105-cell golden no-regression matrix + reorder proofs, 26 assertions. Preceded by prerequisite fix [#49](https://github.com/5s10r2/claude-booking-bot/pull/49) (date-flaky quality-trend test that was reddening the gate for ALL PRs). Gate **41/41**. **Prod (same Kurla search, only the anchor word differs):** balanced 76/75/70/69/69 → budget-led rewards the ₹9k property (Mass Metropolis 70→74, climbs above a ₹10k option) → quality-led 63/61/56/56/55 (de-emphasizes budget). The anchor word changing the ranking is impossible pre-R8 → deploy live + working. (Minor run-to-run score variance = live transit/outcome signals under down-OSRM, pre-existing, not R8.)
 - **Last shipped:** **G-20** — public customer-care line shared only when asked/stuck ✅ ([#47](https://github.com/5s10r2/claude-booking-bot/pull/47), `6ec495e`, live-verified 3/3). Bot-only, no config/backend change.
-- **Doing next:** your call — all cheap Phase-1 "Real" wins are done (R1, R5, R8, NAME-1, G-13, G-20). Remaining bot-only: P1.7 (KYC honesty, in PR [#30](https://github.com/5s10r2/claude-booking-bot/pull/30)). Then Phase 2 (paired) once the availability endpoint lands.
+- **Doing next:** **SILO (the true P0) is now closed bot-side** ([#52](https://github.com/5s10r2/claude-booking-bot/pull/52)) — managers get an FCM push on every bot visit/call/token. P1.7 was already done (#40); PR #30 closed as superseded. Phase-1 bot-only is **complete**. Next lever: **Phase 2 (paired)** — availability/per-sharing price (A1/R2/R3/E2), blocked on the backend availability endpoint (AV-§1). Plus the **SILO backend follow-up** (move the notify into the 3 handlers so non-bot callers notify too).
 - **Blocked on you:** **OSRM EC2 restart** (backend/AWS — bot is correct either way now, but a restart auto-upgrades R1 to precise "X min" labels). 2 product decisions (E3, AV-§2) when convenient.
 
 > **Live finding (2026-06-05):** `maps.rentok.com` OSRM is **down at the network level** on prod (EC2 stopped/terminated — confirmed with backend; the bot is the live consumer, backend's own OSRM refs are commented out). **C1 makes the bot correct regardless:** ranks by honest straight-line proximity, skips the dead host instantly via the breaker, self-heals when the EC2 returns. On restore, confirm the bot's Render `OSRM_API_KEY` + the OSRM param name (`api_key` vs `key`) — one live commute search flips labels "~X km" → "X min".
@@ -65,7 +65,7 @@ protection + the CI gate guard `main`.
 | **NAME-1** | Capture + use the user's name (personalization). **✅ LIVE-VERIFIED.** `save_name` tool (web analog of WhatsApp profile name, in ALWAYS_TOOLS) + every conversational agent appends an uncached name directive → addresses the user by first name; absent name = byte-clean prompt. 31/31 hermetic. Prod: "I'm Sanchay" → "Got it, Sanchay! 🙌" → used again next turn → persisted (admin API). | Rl Gr | ✅ | [#45](https://github.com/5s10r2/claude-booking-bot/pull/45) |
 | **G-13** | Surface property lat/long. **✅ ALREADY DONE — verify-first found the "formatting only" label was stale.** Coords reach the user three ways: carousel `lat`/`lng` + `map_center` → Leaflet Map View; `google_map` deep link built in search.py:757 + property_details.py:161. No PR needed. | Rl | ✅ | — |
 | **G-20** | Surface support contacts. **✅ LIVE-VERIFIED 3/3 — bot-only, no config/backend change.** Verify-first (after PO note "we already take a comms contact at RentOk") found the source: `property.communication_contact` (= OxOtel's `7304531989`, public customer-care line; RentOk's own bot already shares it) + microsite `customer_support_*` — distinct from the hidden `personal_contact` (owner). `get_support_contact` surfaces it **only when asked/stuck** (per PO). Prod: search volunteered no number; "give me a number for ROHA VATIKA" → `7304531989`; owner `7977106781` never leaked. 21/21 hermetic. | Rl Gr | ✅ | [#47](https://github.com/5s10r2/claude-booking-bot/pull/47) |
-| **P1.7** | KYC generate-failure no longer reported as false success | H | ⏳ | [#30](https://github.com/5s10r2/claude-booking-bot/pull/30) |
+| **P1.7** | KYC generate-failure no longer reported as false success. **✅ ALREADY DONE via [#40](https://github.com/5s10r2/claude-booking-bot/pull/40) (`d9c83c2`)** — verify-first found `initiate_kyc` already has the full honest fix (`_kyc_status_ok`/`_safe_kyc_reason` inner-status branch + no-leak transport handler + 25s timeout); `test_kyc_honesty.py` 10/10 in the gate. PR #30 was a strictly-weaker earlier attempt → **closed as superseded** (would've regressed the leak fix). Third stale "in-PR" label this engagement. | H | ✅ | [#40](https://github.com/5s10r2/claude-booking-bot/pull/40) |
 | **R8** | Intent-tuned ranking weight profiles per user. `classify_intent` (deterministic: prefs + current message, conflict→None) picks budget/commute/amenity/quality-led; match_score scales each component by profile/balanced (balanced ≡ 1.0 → byte-identical default). Gender + deal-breaker never shift. 105-cell golden no-regression + reorder proofs, 26 assertions. | Rf | ✅ | [#50](https://github.com/5s10r2/claude-booking-bot/pull/50) |
 
 ---
@@ -100,7 +100,7 @@ protection + the CI gate guard `main`.
 
 | ID | Item | Truth | Status | PR |
 |---|---|---|---|---|
-| **SILO** | **THE true P0.** Bot bookings/leads/token reach the manager + notifications fire. A booking nobody's told about = broken first impression. | Rl | ⬜ | — |
+| **SILO** | **THE true P0.** Bot bookings/leads/token reach the manager + notifications fire. **✅ bot-side SHIPPED** ([#52](https://github.com/5s10r2/claude-booking-bot/pull/52)) — verified read-only that all 3 backend write-paths persist silently (no notify), then had the bot fire the backend's existing `POST /others/sendNotificationOnCall` (owner 101 + team 103, keyed off the `pg_id` the bot already caches) after a confirmed visit/call/token. Background fire-and-forget; never blocks/breaks the booking. **Contract live-verified** (probed with a fake pg_id → 200 "Notifications sent", no real owner buzzed). 27/27 hermetic. **Backend follow-up still open:** move the notify to the record's home (the 3 handlers) so non-bot callers also notify; persisted-but-unnotified is now closed for the bot path. | Rl | ✅ (bot) | [#52](https://github.com/5s10r2/claude-booking-bot/pull/52) |
 | **P0.1** | Payment gateway verification before recording token | H Rl | ⬜ | — |
 | **P0.2** | Stop returning raw Aadhaar PII to the bot | H | ⬜ | — |
 | **P0.3** | Auth / brand isolation on `/bookingBot/*` | Rl | ⬜ | — |
@@ -162,12 +162,37 @@ Evidence so we never re-litigate or duplicate finished work.
 | Personalization | **NAME-1** — `save_name` capture (web analog of WhatsApp profile name) + name directive threaded into all 4 agents; uses the user's first name naturally, persists it. Live-verified. | [#45](https://github.com/5s10r2/claude-booking-bot/pull/45) |
 | Support | **G-20** — `get_support_contact` shares the property's PUBLIC customer-care line (`communication_contact`) only when asked/stuck; owner's private number stays hidden. Bot-only, no config/backend change. Live-verified 3/3. | [#47](https://github.com/5s10r2/claude-booking-bot/pull/47) |
 | Ranking | **R8 intent-tuned profiles** — per-search weight profile (budget/commute/amenity/quality-led) from deliberate prefs + current message; balanced default is byte-identical to pre-R8 (structural). 105-cell golden + reorder proofs. | [#50](https://github.com/5s10r2/claude-booking-bot/pull/50) |
+| **SILO (P0)** | **Manager notified on bot visit/call/token** — bot fires the backend's existing `sendNotificationOnCall` (owner+team FCM) after a confirmed booking; background fire-and-forget, never blocks. Contract live-verified (fake pg_id → 200, no real buzz). 27/27. | [#52](https://github.com/5s10r2/claude-booking-bot/pull/52) |
+| Honesty | **P1.7** KYC OTP-generate failures surfaced honestly — verify-first found it already done via #40 (`_kyc_status_ok` + no-leak handler); PR #30 closed superseded. | [#40](https://github.com/5s10r2/claude-booking-bot/pull/40) |
 | Test hygiene | **#49** — date-flaky quality-trend fixtures made relative to today (was reddening the shared CI gate for every PR). | [#49](https://github.com/5s10r2/claude-booking-bot/pull/49) |
 
 ---
 
 ## Session log (append-only)
 
+- **2026-06-06 (P1.7 close + SILO P0)** — Cleared the board, then took the true P0.
+  **P1.7:** verify-first against `main` found `initiate_kyc` already carries the full
+  honest fix (via #40 — `_kyc_status_ok`/`_safe_kyc_reason` + no-leak transport handler;
+  `test_kyc_honesty` 10/10). PR #30 was a strictly-weaker earlier attempt that still
+  leaked `str(e)` → **closed as superseded** (merging would've regressed). Third stale
+  "in-PR" label this engagement. **SILO** ([#52](https://github.com/5s10r2/claude-booking-bot/pull/52)): delegated a read-only Explore over the
+  live backend → all 3 bot write-paths (`saveLeadData`, `addLeadFromEazyPGID`,
+  `addBookingBotPayement`) persist + return `status:200` with **zero** manager
+  notification; I spot-verified the decisive handlers myself. The FCM mechanism exists
+  (`others.ts:3363 sendNotificationOnCall`, owner 101 / team 103, keyed off `pg_id`) and
+  is **unauthenticated**; the bot already caches `p_pg_id`. So bot-side fix: new
+  `tools/booking/notify_manager.py` → `fire_booking_notification` schedules a
+  **background task** (redis name lookup + FCM POST run OFF the booking's critical path,
+  so a hiccup can never delay/break a confirmed booking; naturally hermetic under
+  asyncio.run — which also surfaced + fixed a real defensiveness bug where an inline
+  name-fetch broke test_wave_a's verify_payment). Wired into visit/call/payment after
+  the success gate. PO: notify on visit+call+token, audience owner+team. **Live-verified
+  the contract safely** — probed `sendNotificationOnCall` with a FAKE pg_id → 200
+  "Notifications sent", no real owner buzzed (deliberately did NOT trigger a real
+  booking to avoid spamming an OxOtel owner; final device-buzz check needs a test
+  property/owner). `test_manager_notify.py` 27/27; gate **42/42**. Also fixed a
+  date-flaky gate test first ([#49](https://github.com/5s10r2/claude-booking-bot/pull/49)). Backend follow-up open: move the notify to
+  the 3 handlers so non-bot callers notify too. Spec: `docs/silo-manager-notification-spec.md`.
 - **2026-06-06 (R8 intent ranking)** — Design pass first (PO sign-off: deterministic
   heuristic · all 4 intents · moderate ~+40%). Verify-first surfaced two things the
   tracker/labels didn't: (1) `search_properties(user_id, **kwargs)` gets **no message
