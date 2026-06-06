@@ -60,7 +60,10 @@ def test_parse():
     check("pin → suffix stripped from model", m == "openrouter/z-ai/glm-4.6")
     check("pin → provider order", eb["provider"]["order"] == ["deepinfra"])
     check("pin → quant floor", eb["provider"]["quantizations"] == ["fp8"])
-    check("pin → fallbacks stay on", eb["provider"]["allow_fallbacks"] is True)
+    # Explicit provider pin is HONEST: fallbacks OFF so an unavailable provider
+    # fails loud (→ EngineError → Anthropic fallback) instead of silently routing
+    # to a broken endpoint (the @deepinfra/fp8 → truncated-tool-name loop bug).
+    check("provider pin → fallbacks OFF", eb["provider"]["allow_fallbacks"] is False)
 
     m, eb = _parse_model_override("openrouter/z-ai/glm-4.6@deepinfra/bf16")
     check("bf16 pin", eb["provider"]["quantizations"] == ["bf16"])
@@ -68,11 +71,24 @@ def test_parse():
     m, eb = _parse_model_override("openrouter/z-ai/glm-4.6@deepinfra")
     check("provider-only pin → no quant key", "quantizations" not in eb["provider"])
     check("provider-only pin → order set", eb["provider"]["order"] == ["deepinfra"])
+    check("provider-only pin → fallbacks OFF", eb["provider"]["allow_fallbacks"] is False)
+
+    # Quant-only pin (no provider) keeps fallbacks ON with the quant as a floor.
+    m, eb = _parse_model_override("openrouter/z-ai/glm-4.6@/fp8")
+    check("quant-only pin → fallbacks ON", eb["provider"]["allow_fallbacks"] is True)
+    check("quant-only pin → quant floor", eb["provider"]["quantizations"] == ["fp8"])
+    check("quant-only pin → no order", "order" not in eb["provider"])
 
     # Cost lookup must resolve on the CLEAN model, suffix-free.
     m, _ = _parse_model_override("openrouter/z-ai/glm-4.6@deepinfra/fp8")
     rates = config.settings.COST_PER_MTK.get(m)
     check("cost lookup resolves on clean model", rates == {"in": 0.43, "out": 1.74})
+
+    # The :exacto variant (working tool-calling config) has its own cost entry —
+    # _parse leaves it intact (no @) so the lookup is suffix-exact.
+    m, eb = _parse_model_override("openrouter/z-ai/glm-4.6:exacto")
+    check(":exacto left intact (no @)", m == "openrouter/z-ai/glm-4.6:exacto" and eb is None)
+    check(":exacto has cost entry", config.settings.COST_PER_MTK.get(m) == {"in": 0.43, "out": 1.74})
 
 
 # ---------------------------------------------------------------------------

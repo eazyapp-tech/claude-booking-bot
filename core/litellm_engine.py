@@ -47,10 +47,16 @@ def _parse_model_override(model: str) -> tuple[str, Optional[dict]]:
 
     The returned litellm_model is the clean model string (used for both the
     API call AND the COST_PER_MTK lookup — the suffix must never leak into either).
-    extra_body carries OpenRouter provider routing: the named provider is tried
-    first, and `quantizations` acts as a hard quality FLOOR — even a fallback
-    provider must serve that quant, so quality never silently drops while uptime
-    is preserved (allow_fallbacks stays on).
+
+    extra_body carries OpenRouter provider routing. An EXPLICIT provider pin is
+    honest: allow_fallbacks=False, so if that provider doesn't serve the model
+    (or is down) the call fails loudly → EngineError → Anthropic fallback, rather
+    than silently routing to a different (possibly broken) endpoint. (Lesson from
+    `@deepinfra/fp8`: DeepInfra serves no GLM-4.6 endpoint on OpenRouter, and with
+    fallbacks ON the request silently routed to an endpoint that TRUNCATED tool
+    names → a 62s max-iteration loop. Hard pin would have surfaced it instantly.)
+    A quant-only pin (no provider) keeps fallbacks ON with `quantizations` as a
+    hard quality floor (any fallback provider must serve that quant).
     """
     if "@" not in model:
         return model, None
@@ -62,9 +68,12 @@ def _parse_model_override(model: str) -> tuple[str, Optional[dict]]:
     provider, _, quant = pin.partition("/")
     provider = provider.strip().lower()
     quant = quant.strip().lower()
-    routing: dict = {"allow_fallbacks": True}
+    routing: dict = {}
     if provider:
         routing["order"] = [provider]
+        routing["allow_fallbacks"] = False  # honest pin: unavailable provider fails loud → Anthropic fallback
+    else:
+        routing["allow_fallbacks"] = True
     if quant:
         routing["quantizations"] = [quant]
     return base, {"provider": routing}
