@@ -79,6 +79,34 @@ def _parse_model_override(model: str) -> tuple[str, Optional[dict]]:
     return base, {"provider": routing}
 
 
+def _with_openrouter_defaults(model: str, extra_body: Optional[dict]) -> Optional[dict]:
+    """For OpenRouter models, default to NON-THINKING mode.
+
+    GLM-4.6 (and other reasoning models) otherwise emit the final answer into the
+    `reasoning` channel ~half the time, leaving `content` empty → blank replies +
+    extra latency. Disabling reasoning lands the answer in `content` reliably and
+    is materially faster (verified: GLM-4.6 ~9-11s with thinking → ~4.4s without,
+    near Haiku's 3.3s). Matches the research note "bake off GLM in non-thinking
+    mode". OpenRouter ignores `reasoning` for models that don't support it.
+    """
+    if not model.startswith("openrouter/"):
+        return extra_body
+    eb = dict(extra_body or {})
+    eb.setdefault("reasoning", {"enabled": False})
+    return eb
+
+
+def _final_text(message) -> str:
+    """Final answer text. Belt-and-suspenders: if a reasoning model still left
+    `content` empty, fall back to its reasoning text rather than reply blank."""
+    return (
+        getattr(message, "content", None)
+        or getattr(message, "reasoning_content", None)
+        or getattr(message, "reasoning", None)
+        or ""
+    )
+
+
 # ---------------------------------------------------------------------------
 # Format conversion helpers
 # ---------------------------------------------------------------------------
@@ -193,6 +221,7 @@ class LiteLLMEngine:
             max_iterations = settings.MAX_AGENT_ITERATIONS
 
         model, extra_body = _parse_model_override(model)
+        extra_body = _with_openrouter_defaults(model, extra_body)
         system_text = self._build_system_text(system_prompt)
         oai_tools = _to_openai_tools(tools) if tools else []
         history = list(messages)
@@ -222,7 +251,7 @@ class LiteLLMEngine:
 
             if finish_reason in ("stop", None, "end_turn"):
                 self._track_cost(response, model, agent_name, user_id)
-                return choice.message.content or ""
+                return _final_text(choice.message)
 
             if finish_reason == "tool_calls":
                 tool_calls = choice.message.tool_calls or []
@@ -306,6 +335,7 @@ class LiteLLMEngine:
 
         executor = tool_executor or self.tool_executor
         model, extra_body = _parse_model_override(model)
+        extra_body = _with_openrouter_defaults(model, extra_body)
         system_text = self._build_system_text(system_prompt)
         oai_tools = _to_openai_tools(tools) if tools else []
         history = list(messages)
