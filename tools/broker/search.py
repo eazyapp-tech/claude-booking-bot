@@ -836,6 +836,11 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
 
     set_property_info_map(user_id, existing_map)
 
+    # E2 — image guarantee: surface image-bearing properties first in the carousel.
+    # Properties without images after enrichment appear last among equals — honest,
+    # not excluded. Stable sort preserves score/commute order within each group.
+    property_template.sort(key=lambda p: (0 if p.get("property_image") else 1))
+
     # P4: record the native carousel on the signal slate so egress emits a structured
     # carousel unit that SUPERSEDES the regex-scraped one (stripped in chat.py). Built
     # from the same top-5 property_template WhatsApp shows; byte-compatible with the FE
