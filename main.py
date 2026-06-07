@@ -53,6 +53,17 @@ _SEED_BRANDS = {
     },
     # Add more brands here when their pg_ids are available:
     # "Stanza1234": { "brand_name": "Stanza", "pg_ids": [...], "cities": "Bangalore", ... },
+    "OrchidParc1234": {
+        "brand_name": "Orchid Parc",
+        "pg_ids": [
+            "5cyATJgwaeNkNg51YkpyY9v35eF2",  # main Bengaluru property (198 suite listings)
+            "SHabZGCt6MMiMrLBEppY2Z9FVM93",  # standalone Bengaluru listing
+            "TlFvoJA5ihUBKNFXYIMI9YbQCun1",  # Gurugram
+        ],
+        "cities": "Bengaluru, Gurugram",
+        "areas": "Whitefield, Sarjapur Road",
+        "brand_link_token": "16b842de-a833-4a09-b5fe-6ce8bab661d5",  # stable chatbot URL token
+    },
 }
 
 
