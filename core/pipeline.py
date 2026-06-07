@@ -180,6 +180,15 @@ async def run_pipeline(user_id: str, message: str) -> tuple[str, str, str]:
     except Exception:
         pass
 
+    # Inference-based signal extraction (fire-and-forget)
+    try:
+        import asyncio
+        from core.signal_extractor import extract_and_update
+        full_conv = get_conversation(user_id)
+        asyncio.create_task(extract_and_update(user_id, full_conv))
+    except Exception:
+        pass
+
     return response, agent_name, language
 
 

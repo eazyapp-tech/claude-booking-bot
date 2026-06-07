@@ -75,7 +75,10 @@ jobs:
             test_accounts_signup.py \
             test_kyc_honesty.py \
             test_payment_uuid_retry.py \
-            test_model_router.py; do
+            test_model_router.py \
+            test_signal_extractor.py \
+            test_dx1_inclusion_flags.py \
+            test_addon_services.py; do
             echo "::group::$t"
             python "$t"
             echo "::endgroup::"

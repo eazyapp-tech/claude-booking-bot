@@ -630,12 +630,21 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
     # Re-score with custom scoring (weighted amenities + deal-breaker penalties)
     user_mem = get_user_memory(user_id)
     deal_breakers = user_mem.get("deal_breakers", [])
+    # Merge inferred signals (soft — never override explicit must-haves).
+    # Inferred must-haves and nice-to-haves go into nice_to_have_amenities so
+    # they boost the score without becoming a hard filter (only stated prefs do that).
+    _explicit_nice = prefs.get("nice_to_have_amenities", "")
+    _inferred_must = ",".join(user_mem.get("inferred_must_haves", []) or [])
+    _inferred_nice = ",".join(user_mem.get("nice_to_haves", []) or [])
+    _merged_nice = ",".join(
+        filter(None, [_explicit_nice, _inferred_must, _inferred_nice])
+    )
     scoring_prefs = {
         "min_budget": min_budget,
         "max_budget": max_budget,
         "amenities": amenities,
         "must_have_amenities": prefs.get("must_have_amenities", ""),
-        "nice_to_have_amenities": prefs.get("nice_to_have_amenities", ""),
+        "nice_to_have_amenities": _merged_nice,
         "property_type": property_type or "",
         "pg_available_for": pg_available_for or "",
     }
@@ -644,9 +653,12 @@ async def search_properties(user_id: str, radius_flag: bool = False, **kwargs) -
 
     # R8 — intent-tuned ranking. Pick a weight profile from the user's deliberate
     # prefs + their CURRENT message (read from conversation history; the pipeline
-    # persists it before the agent runs). Absent/ambiguous intent → None → the
-    # `balanced` profile → byte-identical to pre-R8 scoring. Observable, never blind.
-    intent = classify_intent(prefs, _last_user_message(user_id))
+    # persists it before the agent runs). Tier 3 (behavioral): topic_frequency
+    # from signal_extractor serves as a tiebreaker — revealed preference > stated.
+    # Absent/ambiguous intent → None → the `balanced` profile → byte-identical
+    # to pre-R8 scoring. Observable, never blind.
+    topic_freq = user_mem.get("topic_frequency", {}) if user_mem else {}
+    intent = classify_intent(prefs, _last_user_message(user_id), topic_frequency=topic_freq)
     intent_weights = WEIGHT_PROFILES.get(intent) if intent else None
     logger.info("ranking intent profile: %s", intent or "balanced")
 
