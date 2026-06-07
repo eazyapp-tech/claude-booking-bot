@@ -153,6 +153,15 @@ _MEMORY_DEFAULTS = {
     "visits_scheduled": [],        # list of prop_ids
     "deal_breakers": [],           # inferred: ["no AC", "far from metro"]
     "must_haves": [],              # inferred: ["AC", "WiFi"]
+    "urgency": "",                 # inferred: "immediate" | "near" | "flexible" | ""
+    "decision_authority": "",      # inferred: "self" | "family" | ""
+    "lifestyle_tags": [],          # inferred: ["night_schedule", "has_vehicle", ...]
+    "inferred_needs": [],          # derived from lifestyle_tags: ["parking", "24hr_access", ...]
+    "topic_frequency": {},         # inferred: {"commute": 2, "price": 3, ...}
+    "roommate_prefs": {},          # inferred: {"veg_only": True, "no_smoking": True, ...}
+    "inferred_must_haves": [],     # inferred from strong-want language: ["AC", "WiFi"]
+    "nice_to_haves": [],           # inferred from mild-want language: ["gym", "meals"]
+    "amenity_freq": {},            # mention count per amenity across conversation
     "lead_score": 0,
     "last_search_location": "",
     "last_search_budget": "",
@@ -437,8 +446,67 @@ def build_returning_user_context(user_id: str) -> str:
         parts.append(f"Deal-breakers: {', '.join(dbs)}")
 
     must = mem.get("must_haves", [])
-    if must:
-        parts.append(f"Must-haves: {', '.join(must)}")
+    inferred_must = mem.get("inferred_must_haves", [])
+    all_must = sorted(set(must) | set(inferred_must))
+    if all_must:
+        label = "Must-haves"
+        if inferred_must and not must:
+            label = "Must-haves (inferred from conversation)"
+        elif inferred_must and must:
+            label = "Must-haves (stated + inferred)"
+        parts.append(f"{label}: {', '.join(all_must)}")
+
+    nice = mem.get("nice_to_haves", [])
+    if nice:
+        parts.append(f"Nice-to-haves: {', '.join(nice)}")
+
+    urgency = mem.get("urgency", "")
+    if urgency:
+        _urgency_label = {
+            "immediate": "URGENT — needs to move ASAP",
+            "near": "Near-term — within a week or two",
+            "flexible": "Flexible timeline",
+        }
+        parts.append(f"Move-in urgency: {_urgency_label.get(urgency, urgency)}")
+
+    authority = mem.get("decision_authority", "")
+    if authority == "family":
+        parts.append(
+            "Decision authority: FAMILY INVOLVED — offer to share a summary card; "
+            "don't push hard closes, they need to consult at home first"
+        )
+
+    roommate = mem.get("roommate_prefs", {})
+    if roommate:
+        flags = []
+        _labels = {
+            "veg_only":          "veg-only rooms preferred",
+            "no_smoking":        "no smoking in room",
+            "professional_only": "working professionals only",
+            "student_friendly":  "student crowd okay",
+            "no_curfew":         "no curfew required",
+            "regional_preference": "same-community/language preference",
+            "non_veg_ok":        "non-veg okay",
+        }
+        for key, label in _labels.items():
+            if roommate.get(key):
+                flags.append(label)
+        if flags:
+            parts.append(f"Roommate preferences: {', '.join(flags)}")
+
+    lifestyle = mem.get("lifestyle_tags", [])
+    inferred_needs = mem.get("inferred_needs", [])
+    if lifestyle:
+        parts.append(f"Lifestyle: {', '.join(lifestyle)}")
+    if inferred_needs:
+        # Only surface needs that map to visible amenities — skip non-amenity tags
+        from core.signal_extractor import NEED_TO_AMENITY
+        surfaceable = [n for n in inferred_needs if NEED_TO_AMENITY.get(n)]
+        context_only = [n for n in inferred_needs if not NEED_TO_AMENITY.get(n)]
+        if surfaceable:
+            parts.append(f"Implied amenity needs (from lifestyle): {', '.join(surfaceable)}")
+        if context_only:
+            parts.append(f"Context needs (surface in conversation): {', '.join(context_only)}")
 
     score = mem.get("lead_score", 0)
     temp = get_lead_temperature(score)

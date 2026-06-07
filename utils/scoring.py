@@ -53,15 +53,22 @@ _QUALITY_RE = re.compile(
 )
 
 
-def classify_intent(preferences: dict, message: str = "") -> Optional[str]:
+def classify_intent(
+    preferences: dict,
+    message: str = "",
+    topic_frequency: Optional[dict] = None,
+) -> Optional[str]:
     """Pick the ranking intent for this search — deterministic, no LLM.
 
-    Two tiers, freshest-first:
+    Three tiers, freshest-first:
       1. The CURRENT message (transient priority): a budget anchor → budget-led,
          a quality anchor → quality-led. Both anchors at once → ambiguous → None.
       2. Persistent deliberate preferences (the fallback): a saved commute
          destination → commute-led, ≥2 must-have amenities → amenity-led. Both
          set → ambiguous → None.
+      3. Behavioral topic frequency (tiebreaker): if topic_frequency is provided
+         and one topic clearly dominates (≥2 mentions, 2x the next topic), use
+         it. This is the inference-based tier — revealed preference > stated.
 
     Returns one of budget-led / commute-led / amenity-led / quality-led, or
     None when no signal fires OR signals conflict — so the caller uses the
@@ -80,7 +87,7 @@ def classify_intent(preferences: dict, message: str = "") -> Optional[str]:
     if len(msg_intents) >= 2:
         return None  # mixed ask (e.g. "best cheap PG") → stay balanced
 
-    # Tier 2 — persistent preferences.
+    # Tier 2 — persistent deliberate preferences.
     pref_intents = []
     if (preferences.get("commute_from") or "").strip():
         pref_intents.append("commute-led")
@@ -88,6 +95,16 @@ def classify_intent(preferences: dict, message: str = "") -> Optional[str]:
         pref_intents.append("amenity-led")
     if len(pref_intents) == 1:
         return pref_intents[0]
+    if len(pref_intents) >= 2:
+        return None
+
+    # Tier 3 — behavioral topic frequency (inference-based, softest signal).
+    if topic_frequency:
+        from core.signal_extractor import dominant_intent_from_topics
+        behavioral = dominant_intent_from_topics(topic_frequency, min_count=2)
+        if behavioral:
+            return behavioral
+
     return None
 
 
