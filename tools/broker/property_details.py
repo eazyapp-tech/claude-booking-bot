@@ -85,7 +85,8 @@ async def _fetch_details_raw(prop_id: str) -> dict:
                 "amenities":         parse_amenities(ms.get("property_amenities")) or parse_amenities(pd.get("common_amenities")) or pd.get("amenities", ""),
                 "common_amenities":  parse_amenities(ms.get("property_amenities")) or parse_amenities(pd.get("common_amenities", "")),
                 "food_amenities":    pd.get("food_amenities", ""),
-                "services_amenities": pd.get("services_amenities", ""),
+                "meals_available":   ms.get("meals_available") or pd.get("meals_available", ""),
+                "services_amenities": ms.get("services_amenities") or pd.get("services_amenities", ""),
                 "property_type":     pd.get("property_type", ""),
                 "tenants_preferred": pd.get("tenants_preferred", ""),
                 "notice_period":     pd.get("notice_period", ""),
@@ -171,7 +172,8 @@ async def fetch_property_details(user_id: str, property_name: str, **kwargs) -> 
         "security_deposit":   ms.get("security_deposit", ""),
         "property_rules":     _list_to_str(ms.get("property_rules")) or pd.get("property_rules", ""),
         "food_amenities":     pd.get("food_amenities", ""),
-        "services_amenities": pd.get("services_amenities", ""),
+        "meals_available":    ms.get("meals_available") or pd.get("meals_available", ""),
+        "services_amenities": ms.get("services_amenities") or pd.get("services_amenities", ""),
         "electricity_included": _bool_to_yes_no(
             ms.get("is_electricity_included") if ms.get("is_electricity_included") is not None
             else pd.get("is_electricity_included")
