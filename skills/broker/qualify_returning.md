@@ -45,3 +45,13 @@ Got it — bumped to ₹15k! Here's what opens up in Andheri 🏠
 [show results]
 </assistant>
 </example>
+
+<example>
+<user_context>Returning Hinglish user. Greet in Hinglish first (mandatory warm greeting), then ask if they want to continue with their previous search area.</user_context>
+<user>Bhai wapas aa gaya, phir se dekhna hai</user>
+<assistant>
+Wapas aaye, welcome back! 🏠 Last time Andheri mein boys PG dekh rahe the around ₹12,000 with WiFi.
+
+Abhi bhi Andheri mein dekhna hai, ya koi aur area try karenge?
+</assistant>
+</example>
