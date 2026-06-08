@@ -109,9 +109,15 @@ def _apply_web_brand(
     if not token and account_values:
         token = str(account_values.get("token") or "").strip()
 
+    logger.info(
+        "_apply_web_brand user=%s token=%r api_key_prefix=%r",
+        user_id, token, api_key[:12] if api_key else ""
+    )
+
     if not token and api_key:
         # Direct API channel: derive brand from the authenticated key.
         cfg = get_brand_config(api_key) or {}
+        logger.info("_apply_web_brand api-key path cfg.brand_hash=%r cfg.pg_ids=%r", cfg.get("brand_hash"), cfg.get("pg_ids"))
         if cfg.get("brand_hash"):
             brand_hash = cfg["brand_hash"]
             pg_ids = cfg.get("pg_ids", []) or []
