@@ -46,7 +46,8 @@ protection + the CI gate guard `main`.
 - **Last shipped:** **NAME-1** — name capture + personalization ✅ ([#45](https://github.com/5s10r2/claude-booking-bot/pull/45), `8921fb5`). Live-verified: bot captures a volunteered name, uses it by first name across turns, persists it. Preceded by **C1** — OSRM circuit breaker + honest straight-line fallback ✅ ([#43](https://github.com/5s10r2/claude-booking-bot/pull/43)). **Live-verified 4/4** (R1 intact via osrm_get; estimate_commute 30s dead-air eliminated — 0 new timeouts across 3 commute Qs). Preceded by **R1 commute ranking** (marquee) ✅ #37/#38/#39 + eazypg-chat#8, live 10/10.
 - **Last shipped:** **R8** — intent-tuned ranking weight profiles ✅ **LIVE-VERIFIED** ([#50](https://github.com/5s10r2/claude-booking-bot/pull/50), `ff0b2d4`). Design signed off (deterministic heuristic · all 4 intents · moderate ~+40%). `classify_intent` picks budget/commute/amenity/quality-led from deliberate prefs + the current message (read from Redis history); absent/ambiguous → balanced → **byte-identical to pre-R8** (structural: every component scaled by weight/default = 1.0). 105-cell golden no-regression matrix + reorder proofs, 26 assertions. Preceded by prerequisite fix [#49](https://github.com/5s10r2/claude-booking-bot/pull/49) (date-flaky quality-trend test that was reddening the gate for ALL PRs). Gate **41/41**. **Prod (same Kurla search, only the anchor word differs):** balanced 76/75/70/69/69 → budget-led rewards the ₹9k property (Mass Metropolis 70→74, climbs above a ₹10k option) → quality-led 63/61/56/56/55 (de-emphasizes budget). The anchor word changing the ranking is impossible pre-R8 → deploy live + working. (Minor run-to-run score variance = live transit/outcome signals under down-OSRM, pre-existing, not R8.)
 - **Last shipped:** **G-20** — public customer-care line shared only when asked/stuck ✅ ([#47](https://github.com/5s10r2/claude-booking-bot/pull/47), `6ec495e`, live-verified 3/3). Bot-only, no config/backend change.
-- **Doing next:** **SILO (the true P0) is now closed bot-side** ([#52](https://github.com/5s10r2/claude-booking-bot/pull/52)) — managers get an FCM push on every bot visit/call/token. P1.7 was already done (#40); PR #30 closed as superseded. Phase-1 bot-only is **complete**. Next lever: **Phase 2 (paired)** — availability/per-sharing price (A1/R2/R3/E2), blocked on the backend availability endpoint (AV-§1). Plus the **SILO backend follow-up** (move the notify into the 3 handlers so non-bot callers notify too).
+- **In this PR (C2):** Cross-brand contamination fixed — direct-API callers (Alliance etc.) now get their own brand. Single fix closes wrong-brand-name, wrong-properties, wrong-pg_ids-in-booking, wrong-support-contact.
+- **Doing next (after C2):** Alliance audit open issues — H3 (profile routing failure on "What did I shortlist?"), M1 (Hindi input → English qualify), M2 (qualify-vs-search threshold). Full list: see Alliance Audit Issues table at bottom of Phase 1.
 - **Blocked on you:** **OSRM EC2 restart** (backend/AWS — bot is correct either way now, but a restart auto-upgrades R1 to precise "X min" labels). 2 product decisions (E3, AV-§2) when convenient.
 
 > **Live finding (2026-06-05):** `maps.rentok.com` OSRM is **down at the network level** on prod (EC2 stopped/terminated — confirmed with backend; the bot is the live consumer, backend's own OSRM refs are commented out). **C1 makes the bot correct regardless:** ranks by honest straight-line proximity, skips the dead host instantly via the breaker, self-heals when the EC2 returns. On restore, confirm the bot's Render `OSRM_API_KEY` + the OSRM param name (`api_key` vs `key`) — one live commute search flips labels "~X km" → "X min".
@@ -67,6 +68,7 @@ protection + the CI gate guard `main`.
 | **G-20** | Surface support contacts. **✅ LIVE-VERIFIED 3/3 — bot-only, no config/backend change.** Verify-first (after PO note "we already take a comms contact at RentOk") found the source: `property.communication_contact` (= OxOtel's `7304531989`, public customer-care line; RentOk's own bot already shares it) + microsite `customer_support_*` — distinct from the hidden `personal_contact` (owner). `get_support_contact` surfaces it **only when asked/stuck** (per PO). Prod: search volunteered no number; "give me a number for ROHA VATIKA" → `7304531989`; owner `7977106781` never leaked. 21/21 hermetic. | Rl Gr | ✅ | [#47](https://github.com/5s10r2/claude-booking-bot/pull/47) |
 | **P1.7** | KYC generate-failure no longer reported as false success. **✅ ALREADY DONE via [#40](https://github.com/5s10r2/claude-booking-bot/pull/40) (`d9c83c2`)** — verify-first found `initiate_kyc` already has the full honest fix (`_kyc_status_ok`/`_safe_kyc_reason` inner-status branch + no-leak transport handler + 25s timeout); `test_kyc_honesty.py` 10/10 in the gate. PR #30 was a strictly-weaker earlier attempt → **closed as superseded** (would've regressed the leak fix). Third stale "in-PR" label this engagement. | H | ✅ | [#40](https://github.com/5s10r2/claude-booking-bot/pull/40) |
 | **R8** | Intent-tuned ranking weight profiles per user. `classify_intent` (deterministic: prefs + current message, conflict→None) picks budget/commute/amenity/quality-led; match_score scales each component by profile/balanced (balanced ≡ 1.0 → byte-identical default). Gender + deal-breaker never shift. 105-cell golden no-regression + reorder proofs, 26 assertions. | Rf | ✅ | [#50](https://github.com/5s10r2/claude-booking-bot/pull/50) |
+| **C2** | **Cross-brand contamination fix.** Direct-API callers (e.g. Alliance) sent `X-API-Key` but no brand link token → `resolve_web_brand` fell through to OxOtel default. `_apply_web_brand` now resolves brand from the API key when no token is present. Token and OxOtel-default paths unchanged. Also closes: C1 (wrong brand name in prompts), C3 (wrong pg_ids in booking), H4 (OxOtel support number returned for non-OxOtel users). 19/19 hermetic (`test_api_key_brand_resolution.py`). | H Rl Rf | ✅ | this PR |
 
 ---
 
@@ -165,10 +167,29 @@ Evidence so we never re-litigate or duplicate finished work.
 | **SILO (P0)** | **Manager notified on bot visit/call/token** — bot fires the backend's existing `sendNotificationOnCall` (owner+team FCM) after a confirmed booking; background fire-and-forget, never blocks. Contract live-verified (fake pg_id → 200, no real buzz). 27/27. | [#52](https://github.com/5s10r2/claude-booking-bot/pull/52) |
 | Honesty | **P1.7** KYC OTP-generate failures surfaced honestly — verify-first found it already done via #40 (`_kyc_status_ok` + no-leak handler); PR #30 closed superseded. | [#40](https://github.com/5s10r2/claude-booking-bot/pull/40) |
 | Test hygiene | **#49** — date-flaky quality-trend fixtures made relative to today (was reddening the shared CI gate for every PR). | [#49](https://github.com/5s10r2/claude-booking-bot/pull/49) |
+| Multi-brand | **C2** — cross-brand contamination: direct-API callers now resolve brand from API key, not OxOtel default. 19/19 hermetic. Also closes C1+C3+H4. | this PR |
+
+---
+
+## Alliance End-to-End Audit Issues (2026-06-08)
+
+Found during a full Alliance bot audit. Alliance is the best-data brand (complete property + room data). Bot-only unless marked [backend].
+
+| ID | Issue | Root cause | Fix | Truth | Status |
+|---|---|---|---|---|---|
+| **C2** | All Alliance users got OxOtel brand, properties, brand name | `resolve_web_brand` OxOtel default when no token | ✅ This PR | H Rl Rf | ✅ |
+| **H3** | "What did I shortlist?" → "trouble processing" | Supervisor doesn't route short returning queries to profile agent | Tune supervisor prompt / keyword safety net | H Gr | ⬜ |
+| **M1** | Hindi input → English qualifying questions | qualify_new/returning.md examples are English-only | Add Hindi/Hinglish examples to qualify skill files | Gr | ⬜ |
+| **M2** | Same intent, different phrasing → qualify vs. direct search | Supervisor/skill-detect threshold unstable by phrasing length | Standardize threshold in supervisor | Gr | ⬜ |
+| **H1** | Girls-only-named PG appears on boys search | `name_gender_token` regex not catching specific Alliance property | Debug exact name + add pattern | Rf | ⬜ |
+| **H2-b** | Bot states "₹12k budget" when user said "affordable" | Haiku over-infers a numeric budget from vague language | Guard in preferences save: only store explicit numeric budget | H | ⬜ |
+| **M3** | "typically 15-20 min" fabricated in prose when OSRM down | C1 protects card label but not spoken text | `commute.md`: forbid stating minutes when only km available | H Gr | ⬜ |
 
 ---
 
 ## Session log (append-only)
+
+- **2026-06-08 (C2 cross-brand contamination fix + Alliance audit)** — Full Alliance audit found the root contamination bug and catalogued 7 remaining issues. C2 fix in this PR. See Alliance Audit Issues table above for open items.
 
 - **2026-06-06 (P1.7 close + SILO P0)** — Cleared the board, then took the true P0.
   **P1.7:** verify-first against `main` found `initiate_kyc` already carries the full

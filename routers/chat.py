@@ -12,7 +12,7 @@ Routes:
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -34,6 +34,7 @@ from db.redis_store import (
     get_user_brand,
     add_to_brand_active_users,
     get_human_mode,
+    get_brand_config,
     get_brand_config_by_hash,
     get_conversation,
     save_conversation,
@@ -91,13 +92,44 @@ class StopRequest(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _apply_web_brand(user_id: str, account_values: dict, brand_token: str) -> tuple[str, list[str]]:
+def _apply_web_brand(
+    user_id: str, account_values: dict, brand_token: str, api_key: str = ""
+) -> tuple[str, list[str]]:
     """Resolve + persist server-authoritative brand identity for a web request.
 
-    Trusts ONLY the verified link token (or the configured default brand) — never
-    the client-supplied brand_hash/pg_ids in account_values. Returns
-    (brand_hash, pg_ids); both empty when no brand resolves this turn.
+    Resolution order:
+    1. Verified link token (brand_token / account_values.token) — web frontend path.
+    2. API key lookup — direct API callers (e.g. Alliance) that send X-API-Key but
+       no brand link token.  Fixes cross-brand contamination: without this, tokenless
+       requests fall through to get_default_brand_config() = OxOtel.
+    3. Configured default brand — tokenless demo/preview traffic.
     """
+    # Check whether a real link token is present before falling through.
+    token = (brand_token or "").strip()
+    if not token and account_values:
+        token = str(account_values.get("token") or "").strip()
+
+    if not token and api_key:
+        # Direct API channel: derive brand from the authenticated key.
+        cfg = get_brand_config(api_key) or {}
+        if cfg.get("brand_hash"):
+            brand_hash = cfg["brand_hash"]
+            pg_ids = cfg.get("pg_ids", []) or []
+            safe_account = {
+                "brand_name": cfg.get("brand_name", ""),
+                "cities": cfg.get("cities", ""),
+                "areas": cfg.get("areas", ""),
+                "pg_ids": pg_ids,
+                "brand_hash": brand_hash,
+            }
+            set_account_values(user_id, safe_account)
+            if pg_ids:
+                set_whitelabel_pg_ids(user_id, pg_ids)
+            set_user_brand(user_id, brand_hash)
+            add_to_brand_active_users(user_id, brand_hash)
+            return brand_hash, pg_ids
+
+    # Token path (web frontend links) or final default fallback (demo/tokenless).
     brand_hash, pg_ids, safe_account = resolve_web_brand(brand_token, account_values)
     if brand_hash:
         set_account_values(user_id, safe_account)
@@ -113,16 +145,17 @@ def _apply_web_brand(user_id: str, account_values: dict, brand_token: str) -> tu
 # ---------------------------------------------------------------------------
 
 @router.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
     """JSON API for Streamlit and other clients."""
     if not req.user_id or not req.message:
         raise HTTPException(status_code=400, detail="user_id and message are required")
 
     check_rate_limit(req.user_id)
 
-    # Resolve brand identity server-side from the verified link token — never trust
-    # the client-supplied brand_hash/pg_ids in account_values.
-    brand_hash, pg_ids_list = _apply_web_brand(req.user_id, req.account_values, req.brand_token)
+    # Resolve brand identity server-side. Token path → web frontend; API-key path →
+    # direct API callers (e.g. Alliance) with no brand link; default → demo traffic.
+    api_key = request.headers.get("X-API-Key", "")
+    brand_hash, pg_ids_list = _apply_web_brand(req.user_id, req.account_values, req.brand_token, api_key)
 
     response, agent_name, language = await run_pipeline(req.user_id, req.message)
 
@@ -185,16 +218,17 @@ async def chat(req: ChatRequest):
 
 
 @router.post("/chat/stream", dependencies=[Depends(verify_api_key)])
-async def chat_stream(req: ChatRequest):
+async def chat_stream(req: ChatRequest, request: Request):
     """SSE streaming endpoint — streams agent events as they happen."""
     if not req.user_id or not req.message:
         raise HTTPException(status_code=400, detail="user_id and message are required")
 
     check_rate_limit(req.user_id)
 
-    # Resolve brand identity server-side from the verified link token — never trust
-    # the client-supplied brand_hash/pg_ids in account_values.
-    brand_hash, pg_ids_list = _apply_web_brand(req.user_id, req.account_values, req.brand_token)
+    # Resolve brand identity server-side. Token path → web frontend; API-key path →
+    # direct API callers (e.g. Alliance) with no brand link; default → demo traffic.
+    api_key = request.headers.get("X-API-Key", "")
+    brand_hash, pg_ids_list = _apply_web_brand(req.user_id, req.account_values, req.brand_token, api_key)
 
     # Brand used in save_conversation + PG inserts below; fall back to any prior tag.
     stream_brand_hash = brand_hash or get_user_brand(req.user_id)
