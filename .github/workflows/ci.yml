@@ -76,7 +76,9 @@ jobs:
             test_kyc_honesty.py \
             test_payment_uuid_retry.py \
             test_model_router.py \
-            test_api_key_brand_resolution.py; do
+            test_api_key_brand_resolution.py \
+            test_tenant_similarity.py \
+            test_h3_profile_routing.py; do
             echo "::group::$t"
             python "$t"
             echo "::endgroup::"
