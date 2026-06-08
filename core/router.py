@@ -30,6 +30,9 @@ PROFILE_PHRASES = [
     "my preference", "my preferences", "my profile",
     "shortlisted properties", "saved properties",
     "booking status", "visit status", "scheduled event",
+    # Shortlist query forms — must come before Phase 2 BROKER_WORDS catches "shortlist"
+    "what did i shortlist", "did i shortlist", "i shortlisted",
+    "my shortlist", "what i shortlisted",
 ]
 
 BROKER_PHRASES = [

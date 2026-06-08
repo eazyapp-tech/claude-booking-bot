@@ -82,12 +82,12 @@ AGENTS:
 
 CRITICAL ROUTING RULES (apply in order):
 1. Does the user ask about THEIR OWN data (profile, preferences, events, past bookings, shortlisted items)? → "profile"
-   Clues: "my visits", "my bookings", "my preferences", "my profile", "shortlisted properties", "booking status", "visit status", "upcoming events", "scheduled events", "saved preferences"
+   Clues: "my visits", "my bookings", "my preferences", "my profile", "shortlisted properties", "booking status", "visit status", "upcoming events", "scheduled events", "saved preferences", "what did I shortlist", "did I shortlist", "my shortlist", "what I shortlisted", "properties I saved"
    Key words: profile, preference, preferences, shortlisted, saved, events, upcoming, bookings (plural = listing query)
 2. Does the message relate to SCHEDULING or TRANSACTING (booking a visit, KYC, payment, cancellation)? → "booking"
    Key words: book, visit, schedule, appointment, call, video, tour, payment, pay, token, KYC, Aadhaar, OTP, reserve, cancel, reschedule, confirm
 3. Does the message relate to FINDING or EXPLORING properties (search, details, images, shortlisting, landmarks, nearby places)? → "broker"
-   Key words: find, search, show, looking, property, properties, PG, flat, apartment, hostel, coliving, co-living, room, rent, budget, area, location, city, available, options, recommend, suggest, nearby, amenities, furnish, BHK, RK, 1BHK, 2BHK, single, double, girls, boys, sharing, shortlist, details, images, photos, landmark, distance, far
+   Key words: find, search, show, looking, property, properties, PG, flat, apartment, hostel, coliving, co-living, room, rent, budget, area, location, city, available, options, recommend, suggest, nearby, amenities, furnish, BHK, RK, 1BHK, 2BHK, single, double, girls, boys, sharing, details, images, photos, landmark, distance, far
 4. The conversation history shows the previous bot message was about property search/recommendations AND the user replies with "yes", "ok", "sure", "go ahead", "please", "yeah", or a short follow-up → "broker"
 5. The conversation history shows the previous bot message was about booking/scheduling AND the user replies with "yes", "ok", "sure", or a date/time → "booking"
 6. Everything else → "default"
